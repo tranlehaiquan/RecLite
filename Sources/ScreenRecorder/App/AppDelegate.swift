@@ -788,12 +788,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 540, height: 490),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 490),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
-        win.title = "ScreenRecorder Preferences"
+        win.title = "RecLite Preferences"
         win.center()
         win.isReleasedWhenClosed = false
         

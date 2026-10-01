@@ -4,10 +4,10 @@ set -e
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$DIR"
 
-echo "==> Building ScreenRecorder Release Binary..."
+echo "==> Building RecLite Release Binary..."
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release
 
-APP_NAME="ScreenRecorder.app"
+APP_NAME="RecLite.app"
 APP_DIR="$DIR/$APP_NAME"
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
@@ -18,9 +18,9 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS"
 mkdir -p "$RESOURCES"
 
-# Copy binary
-cp "$DIR/.build/release/ScreenRecorder" "$MACOS/ScreenRecorder"
-chmod +x "$MACOS/ScreenRecorder"
+# Copy binary (SPM target name stays ScreenRecorder, we rename the binary to RecLite)
+cp "$DIR/.build/release/ScreenRecorder" "$MACOS/RecLite"
+chmod +x "$MACOS/RecLite"
 
 # Copy resources (AppIcon)
 if [ -f "$DIR/Resources/AppIcon.icns" ]; then
@@ -34,15 +34,15 @@ cat << 'EOF' > "$CONTENTS/Info.plist"
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>ScreenRecorder</string>
+    <string>RecLite</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.antigravity.ScreenRecorder</string>
+    <string>com.reclite.app</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>ScreenRecorder</string>
+    <string>RecLite</string>
     <key>CFBundleDisplayName</key>
     <string>RecLite</string>
     <key>CFBundlePackageType</key>
@@ -60,9 +60,9 @@ cat << 'EOF' > "$CONTENTS/Info.plist"
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 RecLite. All rights reserved.</string>
     <key>NSScreenCaptureUsageDescription</key>
-    <string>ScreenRecorder needs screen recording access to capture displays, windows, and custom crop areas.</string>
+    <string>RecLite needs screen recording access to capture displays, windows, and custom crop areas.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>ScreenRecorder needs microphone access to record audio narration alongside screen recordings.</string>
+    <string>RecLite needs microphone access to record audio narration alongside screen recordings.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>
@@ -70,14 +70,14 @@ cat << 'EOF' > "$CONTENTS/Info.plist"
 EOF
 
 echo "==> Signing App Bundle..."
-SIGNING_IDENTITY=$(security find-identity -v -p codesigning | grep -E "Apple Development|ScreenRecorder-Dev" | head -n 1 | awk -F '"' '{print $2}')
+SIGNING_IDENTITY=$(security find-identity -v -p codesigning | grep -E "Apple Development|RecLite-Dev" | head -n 1 | awk -F '"' '{print $2}')
 
 if [ -n "$SIGNING_IDENTITY" ]; then
     echo "==> Using certificate: $SIGNING_IDENTITY (Permanent TCC permissions across builds)"
-    codesign --force --deep --sign "$SIGNING_IDENTITY" --identifier "com.antigravity.ScreenRecorder" "$APP_DIR"
+    codesign --force --deep --sign "$SIGNING_IDENTITY" --identifier "com.reclite.app" "$APP_DIR"
 else
     echo "==> Using ad-hoc signature (-)..."
-    codesign --force --deep --sign - --identifier "com.antigravity.ScreenRecorder" "$APP_DIR"
+    codesign --force --deep --sign - --identifier "com.reclite.app" "$APP_DIR"
 fi
 
 echo "==> macOS App Bundle created successfully at: $APP_DIR"

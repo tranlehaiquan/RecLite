@@ -6,7 +6,7 @@ cd "$DIR"
 
 echo "==> Preparing RecLite DMG Package Builder..."
 
-APP_NAME="ScreenRecorder.app"
+APP_NAME="RecLite.app"
 APP_PATH="$DIR/$APP_NAME"
 DMG_NAME="RecLite-Installer.dmg"
 FINAL_DMG="$DIR/$DMG_NAME"

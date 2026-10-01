@@ -54,7 +54,7 @@ public struct SettingsView: View {
                 .padding(20)
             }
         }
-        .frame(width: 540, height: 490)
+        .frame(width: 640, height: 490)
     }
     
     // MARK: - Tab 0: Video & Format Settings
