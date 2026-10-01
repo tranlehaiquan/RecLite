@@ -1,4 +1,4 @@
-# ScreenRecorder (for macOS)
+# RecLite (for macOS)
 
 A native, ultra-high-performance macOS screen recording application built with **Swift**, **ScreenCaptureKit**, and **AVFoundation**.
 
@@ -6,9 +6,9 @@ Designed to replicate the seamless user experience of macOS's built-in screen re
 
 ---
 
-## 🚀 Why ScreenRecorder?
+## 🚀 Why RecLite?
 
-| Feature | macOS Built-in Screen Recording | **ScreenRecorder** |
+| Feature | macOS Built-in Screen Recording | **RecLite** |
 | :--- | :--- | :--- |
 | **Output Container** | Fixed `.mov` only | **MP4 (`.mp4`) & QuickTime (`.mov`)** |
 | **Video Codec** | Uncompressed / High-bitrate Apple ProRes/H.264 | **HEVC (H.265), H.264 (AVC), ProRes 422** |
