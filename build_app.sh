@@ -58,8 +58,16 @@ cat << 'EOF' > "$CONTENTS/Info.plist"
 </plist>
 EOF
 
-echo "==> Signing App Bundle with stable Bundle ID..."
-codesign --force --deep --sign - --identifier "com.antigravity.ScreenRecorder" "$APP_DIR"
+echo "==> Signing App Bundle..."
+SIGNING_IDENTITY=$(security find-identity -v -p codesigning | grep -E "Apple Development|ScreenRecorder-Dev" | head -n 1 | awk -F '"' '{print $2}')
+
+if [ -n "$SIGNING_IDENTITY" ]; then
+    echo "==> Using certificate: $SIGNING_IDENTITY (Permanent TCC permissions across builds)"
+    codesign --force --deep --sign "$SIGNING_IDENTITY" --identifier "com.antigravity.ScreenRecorder" "$APP_DIR"
+else
+    echo "==> Using ad-hoc signature (-)..."
+    codesign --force --deep --sign - --identifier "com.antigravity.ScreenRecorder" "$APP_DIR"
+fi
 
 echo "==> macOS App Bundle created successfully at: $APP_DIR"
 echo "You can launch it by running: open $APP_DIR"
