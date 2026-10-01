@@ -1,284 +1,438 @@
 import SwiftUI
 import AppKit
 
-/// Interactive crop selection overlay window for custom area recording
-public struct AreaSelectionOverlayView: View {
+/// SwiftUI Representable wrapper for the native AppKit Area Selection View
+public struct AreaSelectionOverlayView: NSViewRepresentable {
     @ObservedObject var appState: AppState
-    
-    @State private var rect: CGRect = CGRect(x: 200, y: 150, width: 800, height: 500)
-    @State private var dragOffset: CGSize = .zero
-    @State private var isDraggingBody: Bool = false
     
     public init(appState: AppState) {
         self.appState = appState
-        if let current = appState.selectedCropRect {
-            _rect = State(initialValue: current)
-        }
     }
     
-    public var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                // Dimmed background with cutout for the selection rect
-                Path { path in
-                    path.addRect(CGRect(origin: .zero, size: geo.size))
-                    path.addRect(rect)
-                }
-                .fill(Color.black.opacity(0.45), style: FillStyle(eoFill: true))
-                .allowsHitTesting(false)
-                
-                // Crop Rectangle with border & handles
-                CropBoxView(
-                    rect: $rect,
-                    screenSize: geo.size,
-                    onRectChange: { updated in
-                        appState.selectedCropRect = updated
-                    },
-                    onRecord: {
-                        appState.selectedCropRect = rect
-                        appState.startRecordingFlow()
-                    },
-                    onCancel: {
-                        appState.setCaptureMode(.entireScreen)
-                    }
-                )
-            }
-            .onAppear {
-                if appState.selectedCropRect == nil {
-                    // Default to center 60% of screen
-                    let w = min(1280.0, geo.size.width * 0.7)
-                    let h = min(720.0, geo.size.height * 0.7)
-                    let x = (geo.size.width - w) / 2.0
-                    let y = (geo.size.height - h) / 2.0
-                    self.rect = CGRect(x: x, y: y, width: w, height: h)
-                    appState.selectedCropRect = self.rect
-                }
-            }
+    public func makeNSView(context: Context) -> AreaSelectionNSView {
+        let view = AreaSelectionNSView(appState: appState)
+        return view
+    }
+    
+    public func updateNSView(_ nsView: AreaSelectionNSView, context: Context) {
+        nsView.appState = appState
+        if let crop = appState.selectedCropRect, crop != nsView.rect && !nsView.isDragging {
+            nsView.rect = crop
+            nsView.needsDisplay = true
         }
-        .edgesIgnoringSafeArea(.all)
     }
 }
 
-// MARK: - CropBoxView
+// MARK: - Native AppKit Area Selection View (Exact macOS Replicate)
 
-struct CropBoxView: View {
-    @Binding var rect: CGRect
-    let screenSize: CGSize
-    let onRectChange: (CGRect) -> Void
-    let onRecord: () -> Void
-    let onCancel: () -> Void
+public final class AreaSelectionNSView: NSView {
+    var appState: AppState
+    var rect: CGRect = .zero
     
-    @GestureState private var bodyDragDelta: CGSize = .zero
-    
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            // Main draggable area
-            Rectangle()
-                .fill(Color.white.opacity(0.001)) // invisible hit target
-                .frame(width: max(40, rect.width), height: max(40, rect.height))
-                .border(Color.white, width: 2)
-                .overlay(
-                    // Subtle crosshair guides inside
-                    ZStack {
-                        Rectangle()
-                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                        // Rule of thirds lines
-                        HStack {
-                            Spacer()
-                            Divider().background(Color.white.opacity(0.15))
-                            Spacer()
-                            Divider().background(Color.white.opacity(0.15))
-                            Spacer()
-                        }
-                        VStack {
-                            Spacer()
-                            Divider().background(Color.white.opacity(0.15))
-                            Spacer()
-                            Divider().background(Color.white.opacity(0.15))
-                            Spacer()
-                        }
-                    }
-                )
-                .gesture(
-                    DragGesture()
-                        .onChanged { value in
-                            var newX = rect.origin.x + value.translation.width
-                            var newY = rect.origin.y + value.translation.height
-                            newX = max(0, min(newX, screenSize.width - rect.width))
-                            newY = max(0, min(newY, screenSize.height - rect.height))
-                            rect.origin = CGPoint(x: newX, y: newY)
-                            onRectChange(rect)
-                        }
-                )
-            
-            // Corner & Edge Resize Handles
-            ResizeHandle(x: rect.minX - 4, y: rect.minY - 4) { d in
-                resize(dx: d.width, dy: d.height, isLeft: true, isTop: true)
-            }
-            ResizeHandle(x: rect.maxX - 6, y: rect.minY - 4) { d in
-                resize(dx: d.width, dy: d.height, isLeft: false, isTop: true)
-            }
-            ResizeHandle(x: rect.minX - 4, y: rect.maxY - 6) { d in
-                resize(dx: d.width, dy: d.height, isLeft: true, isTop: false)
-            }
-            ResizeHandle(x: rect.maxX - 6, y: rect.maxY - 6) { d in
-                resize(dx: d.width, dy: d.height, isLeft: false, isTop: false)
-            }
-            
-            // Dimension Badge on top edge
-            HStack(spacing: 8) {
-                Text("\(Int(rect.width)) × \(Int(rect.height))")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white)
-                
-                Text(aspectRatioString)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(Color.black.opacity(0.75))
-            .clipShape(Capsule())
-            .offset(x: rect.midX - 60, y: max(10, rect.minY - 32))
-            
-            // Bottom Action Bar
-            HStack(spacing: 12) {
-                // Preset buttons
-                Button("1080p") {
-                    setDimensions(width: 1920, height: 1080)
-                }
-                .buttonStyle(PresetBadgeStyle())
-                
-                Button("720p") {
-                    setDimensions(width: 1280, height: 720)
-                }
-                .buttonStyle(PresetBadgeStyle())
-                
-                Button("1:1") {
-                    let side = min(rect.width, rect.height)
-                    setDimensions(width: side, height: side)
-                }
-                .buttonStyle(PresetBadgeStyle())
-                
-                Divider()
-                    .frame(height: 18)
-                    .opacity(0.3)
-                
-                // Cancel
-                Button("Cancel") {
-                    onCancel()
-                }
-                .font(.system(size: 12, weight: .medium))
-                .buttonStyle(.plain)
-                
-                // Record
-                Button(action: onRecord) {
-                    HStack(spacing: 5) {
-                        Circle().fill(Color.red).frame(width: 8, height: 8)
-                        Text("Record Area")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.red)
-                    .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .shadow(color: .black.opacity(0.4), radius: 8, y: 3)
-            .offset(x: max(20, rect.midX - 160), y: min(screenSize.height - 60, rect.maxY + 14))
-        }
+    // Dragging state
+    private enum DragMode {
+        case none
+        case moving(startLocation: CGPoint, startOrigin: CGPoint)
+        case resizing(handle: Handle, startLocation: CGPoint, startRect: CGRect)
+        case creating(anchor: CGPoint)
     }
     
-    private var aspectRatioString: String {
-        guard rect.height > 0 else { return "" }
-        let ratio = rect.width / rect.height
-        if abs(ratio - (16.0 / 9.0)) < 0.05 { return "16:9" }
-        if abs(ratio - (4.0 / 3.0)) < 0.05 { return "4:3" }
-        if abs(ratio - 1.0) < 0.05 { return "1:1" }
-        return String(format: "%.2f:1", ratio)
+    private var dragMode: DragMode = .none
+    var isDragging: Bool {
+        if case .none = dragMode { return false }
+        return true
     }
     
-    private func setDimensions(width: CGFloat, height: CGFloat) {
-        let w = min(width, screenSize.width)
-        let h = min(height, screenSize.height)
-        var originX = rect.midX - (w / 2)
-        var originY = rect.midY - (h / 2)
-        originX = max(0, min(originX, screenSize.width - w))
-        originY = max(0, min(originY, screenSize.height - h))
-        self.rect = CGRect(x: originX, y: originY, width: w, height: h)
-        onRectChange(rect)
-    }
-    
-    private func resize(dx: CGFloat, dy: CGFloat, isLeft: Bool, isTop: Bool) {
-        var newRect = rect
-        if isLeft {
-            let proposedW = newRect.width - dx
-            if proposedW >= 100 {
-                newRect.origin.x += dx
-                newRect.size.width = proposedW
-            }
-        } else {
-            let proposedW = newRect.width + dx
-            if proposedW >= 100 {
-                newRect.size.width = proposedW
+    enum Handle: CaseIterable {
+        case topLeft, topCenter, topRight
+        case leftCenter, rightCenter
+        case bottomLeft, bottomCenter, bottomRight
+        
+        func point(for rect: CGRect) -> CGPoint {
+            switch self {
+            case .topLeft: return CGPoint(x: rect.minX, y: rect.minY)
+            case .topCenter: return CGPoint(x: rect.midX, y: rect.minY)
+            case .topRight: return CGPoint(x: rect.maxX, y: rect.minY)
+            case .leftCenter: return CGPoint(x: rect.minX, y: rect.midY)
+            case .rightCenter: return CGPoint(x: rect.maxX, y: rect.midY)
+            case .bottomLeft: return CGPoint(x: rect.minX, y: rect.maxY)
+            case .bottomCenter: return CGPoint(x: rect.midX, y: rect.maxY)
+            case .bottomRight: return CGPoint(x: rect.maxX, y: rect.maxY)
             }
         }
         
-        if isTop {
-            let proposedH = newRect.height - dy
-            if proposedH >= 100 {
-                newRect.origin.y += dy
-                newRect.size.height = proposedH
+        func hitRect(for rect: CGRect) -> CGRect {
+            let p = point(for: rect)
+            return CGRect(x: p.x - 10, y: p.y - 10, width: 20, height: 20)
+        }
+        
+        var cursor: NSCursor {
+            switch self {
+            case .leftCenter, .rightCenter:
+                return .resizeLeftRight
+            case .topCenter, .bottomCenter:
+                return .resizeUpDown
+            case .topLeft, .bottomRight, .topRight, .bottomLeft:
+                return .crosshair
             }
+        }
+    }
+    
+    private var trackingArea: NSTrackingArea?
+    
+    // Coordinates: Flipped so (0,0) is Top-Left, exactly matching ScreenCaptureKit
+    public override var isFlipped: Bool { true }
+    public override var acceptsFirstResponder: Bool { true }
+    
+    public init(appState: AppState) {
+        self.appState = appState
+        super.init(frame: .zero)
+        self.wantsLayer = true
+        if let crop = appState.selectedCropRect {
+            self.rect = crop
+        }
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.makeFirstResponder(self)
+        if rect == .zero && bounds.width > 0 && bounds.height > 0 {
+            initializeDefaultRect()
+        }
+    }
+    
+    public override func layout() {
+        super.layout()
+        if rect == .zero && bounds.width > 0 && bounds.height > 0 {
+            initializeDefaultRect()
+        }
+    }
+    
+    private func initializeDefaultRect() {
+        if let current = appState.selectedCropRect, current.width > 50 && current.height > 50 {
+            self.rect = current
         } else {
-            let proposedH = newRect.height + dy
-            if proposedH >= 100 {
-                newRect.size.height = proposedH
+            let w = min(960.0, bounds.width * 0.65)
+            let h = min(540.0, bounds.height * 0.65)
+            let x = (bounds.width - w) / 2.0
+            let y = (bounds.height - h) / 2.0
+            self.rect = CGRect(x: x, y: y, width: w, height: h)
+            appState.selectedCropRect = self.rect
+        }
+        needsDisplay = true
+    }
+    
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea {
+            removeTrackingArea(existing)
+        }
+        let options: NSTrackingArea.Options = [.mouseMoved, .cursorUpdate, .activeAlways, .inVisibleRect]
+        let area = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
+        addTrackingArea(area)
+        self.trackingArea = area
+    }
+    
+    // MARK: - Drawing (macOS Native Aesthetic)
+    
+    public override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard bounds.width > 0 && bounds.height > 0 else { return }
+        
+        // 1. Dimmed full-screen backdrop with cutout for selection rect
+        let backdrop = NSBezierPath(rect: bounds)
+        backdrop.append(NSBezierPath(rect: rect))
+        backdrop.windingRule = .evenOdd
+        NSColor(white: 0.0, alpha: 0.45).setFill()
+        backdrop.fill()
+        
+        guard rect.width > 1 && rect.height > 1 else { return }
+        
+        // 2. Rule-of-thirds subtle guide lines inside selection
+        let thirdW = rect.width / 3.0
+        let thirdH = rect.height / 3.0
+        if thirdW > 50 && thirdH > 50 {
+            let grid = NSBezierPath()
+            grid.move(to: NSPoint(x: rect.minX + thirdW, y: rect.minY))
+            grid.line(to: NSPoint(x: rect.minX + thirdW, y: rect.maxY))
+            grid.move(to: NSPoint(x: rect.minX + 2 * thirdW, y: rect.minY))
+            grid.line(to: NSPoint(x: rect.minX + 2 * thirdW, y: rect.maxY))
+            
+            grid.move(to: NSPoint(x: rect.minX, y: rect.minY + thirdH))
+            grid.line(to: NSPoint(x: rect.maxX, y: rect.minY + thirdH))
+            grid.move(to: NSPoint(x: rect.minX, y: rect.minY + 2 * thirdH))
+            grid.line(to: NSPoint(x: rect.maxX, y: rect.minY + 2 * thirdH))
+            
+            NSColor(white: 1.0, alpha: 0.12).setStroke()
+            grid.lineWidth = 1.0
+            grid.stroke()
+        }
+        
+        // 3. Crisp selection border (dual-stroke: dark outer shadow + white crisp line)
+        let outer = NSBezierPath(rect: rect.insetBy(dx: -1, dy: -1))
+        NSColor(white: 0.0, alpha: 0.35).setStroke()
+        outer.lineWidth = 1.0
+        outer.stroke()
+        
+        let border = NSBezierPath(rect: rect)
+        NSColor.white.setStroke()
+        border.lineWidth = 1.5
+        border.stroke()
+        
+        // 4. 8 Handles (4 corners + 4 edge centers)
+        let handleSize: CGFloat = 8
+        for handle in Handle.allCases {
+            let p = handle.point(for: rect)
+            let hRect = NSRect(x: p.x - handleSize / 2, y: p.y - handleSize / 2, width: handleSize, height: handleSize)
+            
+            // Subtle dark halo
+            let halo = NSBezierPath(ovalIn: hRect.insetBy(dx: -1, dy: -1))
+            NSColor(white: 0.0, alpha: 0.5).setFill()
+            halo.fill()
+            
+            // White handle core
+            let core = NSBezierPath(ovalIn: hRect)
+            NSColor.white.setFill()
+            core.fill()
+        }
+        
+        // 5. Dimension & Quick Record Pill (Float below selection or above if near bottom)
+        drawPill()
+    }
+    
+    private func getPillRect() -> CGRect {
+        let pillWidth: CGFloat = 200
+        let pillHeight: CGFloat = 34
+        
+        var pillY = rect.maxY + 12
+        if pillY + pillHeight + 10 > bounds.height {
+            pillY = rect.minY - pillHeight - 12
+        }
+        let pillX = max(16, min(rect.midX - pillWidth / 2, bounds.width - pillWidth - 16))
+        return CGRect(x: pillX, y: pillY, width: pillWidth, height: pillHeight)
+    }
+    
+    private func getRecordButtonRect(in pillRect: CGRect) -> CGRect {
+        return CGRect(x: pillRect.maxX - 76, y: pillRect.minY + 4, width: 70, height: pillRect.height - 8)
+    }
+    
+    private func drawPill() {
+        guard rect.width >= 40 && rect.height >= 40 else { return }
+        
+        let pillRect = getPillRect()
+        
+        // Pill background
+        let pillPath = NSBezierPath(roundedRect: pillRect, xRadius: 8, yRadius: 8)
+        NSColor(white: 0.1, alpha: 0.92).setFill()
+        pillPath.fill()
+        NSColor(white: 1.0, alpha: 0.22).setStroke()
+        pillPath.lineWidth = 1.0
+        pillPath.stroke()
+        
+        // Dimensions text
+        let dimsText = "\(Int(rect.width)) × \(Int(rect.height))"
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .bold),
+            .foregroundColor: NSColor.white
+        ]
+        let attrStr = NSAttributedString(string: dimsText, attributes: attrs)
+        let textY = pillRect.midY - attrStr.size().height / 2
+        attrStr.draw(at: NSPoint(x: pillRect.minX + 12, y: textY))
+        
+        // Record Button inside Pill
+        let btnRect = getRecordButtonRect(in: pillRect)
+        let btnPath = NSBezierPath(roundedRect: btnRect, xRadius: 5, yRadius: 5)
+        NSColor.systemRed.setFill()
+        btnPath.fill()
+        
+        let btnText = "● Record"
+        let btnAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .bold),
+            .foregroundColor: NSColor.white
+        ]
+        let btnStr = NSAttributedString(string: btnText, attributes: btnAttrs)
+        let btnX = btnRect.midX - btnStr.size().width / 2
+        let btnY = btnRect.midY - btnStr.size().height / 2
+        btnStr.draw(at: NSPoint(x: btnX, y: btnY))
+    }
+    
+    // MARK: - Mouse Interaction
+    
+    public override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        
+        // 1. Check if Record button in pill clicked
+        let pillRect = getPillRect()
+        let btnRect = getRecordButtonRect(in: pillRect)
+        if btnRect.contains(point) {
+            appState.selectedCropRect = rect
+            appState.startRecordingFlow()
+            return
+        }
+        
+        // 2. Check handles
+        for handle in Handle.allCases {
+            if handle.hitRect(for: rect).contains(point) {
+                dragMode = .resizing(handle: handle, startLocation: point, startRect: rect)
+                handle.cursor.set()
+                return
             }
         }
         
-        self.rect = newRect
-        onRectChange(rect)
+        // 3. Check inside crop rect -> Move
+        if rect.contains(point) {
+            dragMode = .moving(startLocation: point, startOrigin: rect.origin)
+            NSCursor.closedHand.set()
+            return
+        }
+        
+        // 4. Clicked outside -> Draw a brand-new rectangle from scratch
+        dragMode = .creating(anchor: point)
+        rect = CGRect(origin: point, size: .zero)
+        NSCursor.crosshair.set()
+        needsDisplay = true
     }
-}
-
-// MARK: - ResizeHandle
-
-struct ResizeHandle: View {
-    let x: CGFloat
-    let y: CGFloat
-    let onDrag: (CGSize) -> Void
     
-    var body: some View {
-        Circle()
-            .fill(Color.white)
-            .frame(width: 10, height: 10)
-            .shadow(color: .black.opacity(0.5), radius: 2)
-            .offset(x: x, y: y)
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        onDrag(value.translation)
-                    }
-            )
+    public override func mouseDragged(with event: NSEvent) {
+        let current = convert(event.locationInWindow, from: nil)
+        
+        switch dragMode {
+        case .none:
+            break
+            
+        case .moving(let startLocation, let startOrigin):
+            let deltaX = current.x - startLocation.x
+            let deltaY = current.y - startLocation.y
+            var newX = startOrigin.x + deltaX
+            var newY = startOrigin.y + deltaY
+            newX = max(0, min(newX, bounds.width - rect.width))
+            newY = max(0, min(newY, bounds.height - rect.height))
+            self.rect.origin = CGPoint(x: newX, y: newY)
+            appState.selectedCropRect = self.rect
+            NSCursor.closedHand.set()
+            needsDisplay = true
+            
+        case .resizing(let handle, let startLocation, let startRect):
+            let deltaX = current.x - startLocation.x
+            let deltaY = current.y - startLocation.y
+            let minSize: CGFloat = 60
+            var r = startRect
+            
+            switch handle {
+            case .leftCenter:
+                let newX = min(startRect.maxX - minSize, startRect.minX + deltaX)
+                r.origin.x = max(0, newX)
+                r.size.width = startRect.maxX - r.origin.x
+            case .rightCenter:
+                let newW = max(minSize, startRect.width + deltaX)
+                r.size.width = min(bounds.width - r.origin.x, newW)
+            case .topCenter:
+                let newY = min(startRect.maxY - minSize, startRect.minY + deltaY)
+                r.origin.y = max(0, newY)
+                r.size.height = startRect.maxY - r.origin.y
+            case .bottomCenter:
+                let newH = max(minSize, startRect.height + deltaY)
+                r.size.height = min(bounds.height - r.origin.y, newH)
+            case .topLeft:
+                let newX = min(startRect.maxX - minSize, startRect.minX + deltaX)
+                let newY = min(startRect.maxY - minSize, startRect.minY + deltaY)
+                r.origin.x = max(0, newX)
+                r.origin.y = max(0, newY)
+                r.size.width = startRect.maxX - r.origin.x
+                r.size.height = startRect.maxY - r.origin.y
+            case .topRight:
+                let newY = min(startRect.maxY - minSize, startRect.minY + deltaY)
+                let newW = max(minSize, startRect.width + deltaX)
+                r.origin.y = max(0, newY)
+                r.size.height = startRect.maxY - r.origin.y
+                r.size.width = min(bounds.width - r.origin.x, newW)
+            case .bottomLeft:
+                let newX = min(startRect.maxX - minSize, startRect.minX + deltaX)
+                let newH = max(minSize, startRect.height + deltaY)
+                r.origin.x = max(0, newX)
+                r.size.width = startRect.maxX - r.origin.x
+                r.size.height = min(bounds.height - r.origin.y, newH)
+            case .bottomRight:
+                let newW = max(minSize, startRect.width + deltaX)
+                let newH = max(minSize, startRect.height + deltaY)
+                r.size.width = min(bounds.width - r.origin.x, newW)
+                r.size.height = min(bounds.height - r.origin.y, newH)
+            }
+            
+            self.rect = r
+            appState.selectedCropRect = r
+            handle.cursor.set()
+            needsDisplay = true
+            
+        case .creating(let anchor):
+            let minX = max(0, min(anchor.x, current.x))
+            let minY = max(0, min(anchor.y, current.y))
+            let maxX = min(bounds.width, max(anchor.x, current.x))
+            let maxY = min(bounds.height, max(anchor.y, current.y))
+            self.rect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+            appState.selectedCropRect = self.rect
+            NSCursor.crosshair.set()
+            needsDisplay = true
+        }
     }
-}
-
-// MARK: - PresetBadgeStyle
-
-struct PresetBadgeStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(.white.opacity(configuration.isPressed ? 0.7 : 0.9))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Color.white.opacity(0.12))
-            .cornerRadius(4)
+    
+    public override func mouseUp(with event: NSEvent) {
+        let current = convert(event.locationInWindow, from: nil)
+        if case .creating = dragMode {
+            if rect.width < 30 || rect.height < 30 {
+                // Click without drag: reset to standard 960x540 centered box around click
+                let w: CGFloat = min(960, bounds.width * 0.65)
+                let h: CGFloat = min(540, bounds.height * 0.65)
+                let x = max(0, min(current.x - w / 2, bounds.width - w))
+                let y = max(0, min(current.y - h / 2, bounds.height - h))
+                self.rect = CGRect(x: x, y: y, width: w, height: h)
+            }
+        }
+        dragMode = .none
+        appState.selectedCropRect = self.rect
+        updateCursor(at: current)
+        needsDisplay = true
+    }
+    
+    public override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        updateCursor(at: point)
+    }
+    
+    private func updateCursor(at point: CGPoint) {
+        let pillRect = getPillRect()
+        if pillRect.contains(point) {
+            NSCursor.arrow.set()
+            return
+        }
+        for handle in Handle.allCases {
+            if handle.hitRect(for: rect).contains(point) {
+                handle.cursor.set()
+                return
+            }
+        }
+        if rect.contains(point) {
+            NSCursor.openHand.set()
+            return
+        }
+        NSCursor.crosshair.set()
+    }
+    
+    // MARK: - Keyboard Shortcuts (Escape to cancel, Return/Space to record)
+    
+    public override func keyDown(with event: NSEvent) {
+        switch event.keyCode {
+        case 53: // ESC
+            appState.setCaptureMode(.entireScreen)
+        case 36, 49: // Return or Space
+            appState.selectedCropRect = rect
+            appState.startRecordingFlow()
+        default:
+            super.keyDown(with: event)
+        }
     }
 }

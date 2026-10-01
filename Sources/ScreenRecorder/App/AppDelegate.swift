@@ -14,6 +14,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var areaSelectionPanel: NSPanel?
     private var countdownPanel: NSPanel?
     private var recordingHUDPanel: NSPanel?
+    private var areaRecordingFramePanel: NSPanel?
     private var completionPanel: NSPanel?
     private var settingsWindow: NSWindow?
     
@@ -30,6 +31,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         setupCountdownPanel()
         setupRecordingHUDPanel()
         setupAreaSelectionPanel()
+        setupAreaRecordingFramePanel()
         setupCompletionPanel()
         
         observeStateChanges()
@@ -86,7 +88,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        panel.level = .popUpMenu // Always above selection overlay
         panel.isFloatingPanel = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isOpaque = false
@@ -129,12 +131,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        panel.level = .popUpMenu
+        panel.level = .floating // Below floating control bar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.ignoresMouseEvents = false
+        panel.acceptsMouseMovedEvents = true
         
         let hostingView = NSHostingView(rootView: AreaSelectionOverlayView(appState: appState))
         panel.contentView = hostingView
@@ -145,12 +148,48 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showAreaSelection() {
         if let screen = NSScreen.main, let panel = areaSelectionPanel {
             panel.setFrame(screen.frame, display: true)
-            panel.orderFront(nil)
+            panel.makeKeyAndOrderFront(nil)
+            // Ensure floating bar stays visible and interactable above the dimmed overlay
+            floatingBarPanel?.orderFront(nil)
         }
     }
     
     private func hideAreaSelection() {
         areaSelectionPanel?.orderOut(nil)
+    }
+    
+    // MARK: - Active Area Recording Frame Panel (Shows boundary during recording)
+    
+    private func setupAreaRecordingFramePanel() {
+        guard let screen = NSScreen.main else { return }
+        
+        let panel = NSPanel(
+            contentRect: screen.frame,
+            styleMask: [.borderless, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true // 100% click-through
+        
+        let hostingView = NSHostingView(rootView: AreaRecordingFrameView(appState: appState))
+        panel.contentView = hostingView
+        
+        self.areaRecordingFramePanel = panel
+    }
+    
+    private func showAreaRecordingFrame() {
+        guard let screen = NSScreen.main, let panel = areaRecordingFramePanel else { return }
+        panel.setFrame(screen.frame, display: true)
+        panel.orderFront(nil)
+    }
+    
+    private func hideAreaRecordingFrame() {
+        areaRecordingFramePanel?.orderOut(nil)
     }
     
     // MARK: - Countdown Panel (Centered 3-2-1 indicator)
@@ -324,22 +363,31 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .idle:
                     self.hideCountdown()
                     self.hideRecordingHUD()
+                    self.hideAreaRecordingFrame()
                     self.showFloatingBar()
                 case .countingDown:
                     self.hideFloatingBar()
                     self.hideRecordingHUD()
                     self.showCountdown()
+                    if self.appState.captureMode == .selectedArea {
+                        self.showAreaRecordingFrame()
+                    }
                 case .recording:
                     self.hideFloatingBar()
                     self.hideCountdown()
                     self.showRecordingHUD()
+                    if self.appState.captureMode == .selectedArea {
+                        self.showAreaRecordingFrame()
+                    }
                 case .paused:
                     break
                 case .finalizing:
+                    self.hideAreaRecordingFrame()
                     self.updateStatusItem()
                 case .failed(let msg):
                     self.hideCountdown()
                     self.hideRecordingHUD()
+                    self.hideAreaRecordingFrame()
                     self.showFloatingBar()
                     self.showErrorAlert(msg)
                 }

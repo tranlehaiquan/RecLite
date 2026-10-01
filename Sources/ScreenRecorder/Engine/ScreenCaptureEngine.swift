@@ -48,13 +48,15 @@ public final class ScreenCaptureEngine: NSObject, @unchecked Sendable {
         let filter: SCContentFilter
         let originalSize: CGSize
         var cropRect: CGRect? = nil
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        let myWindows = shareableContent.windows.filter { $0.owningApplication?.processID == myPID }
         
         switch target {
         case .entireScreen(let displayID):
             guard let display = shareableContent.displays.first(where: { $0.displayID == displayID }) ?? shareableContent.displays.first else {
                 throw NSError(domain: "ScreenCaptureEngine", code: 1, userInfo: [NSLocalizedDescriptionKey: "Target display not found"])
             }
-            filter = SCContentFilter(display: display, excludingWindows: [])
+            filter = SCContentFilter(display: display, excludingWindows: myWindows)
             originalSize = CGSize(width: display.width, height: display.height)
             
         case .window(let windowID, _):
@@ -68,7 +70,7 @@ public final class ScreenCaptureEngine: NSObject, @unchecked Sendable {
             guard let display = shareableContent.displays.first(where: { $0.displayID == displayID }) ?? shareableContent.displays.first else {
                 throw NSError(domain: "ScreenCaptureEngine", code: 3, userInfo: [NSLocalizedDescriptionKey: "Target display not found"])
             }
-            filter = SCContentFilter(display: display, excludingWindows: [])
+            filter = SCContentFilter(display: display, excludingWindows: myWindows)
             originalSize = rect.size
             cropRect = rect
         }
