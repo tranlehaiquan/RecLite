@@ -3,15 +3,20 @@ import AppKit
 import AVFoundation
 
 /// Full Settings / Preferences Window
+@MainActor
 public struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var permissions: PermissionsManager
     
     @State private var selectedTab: Int = 0
     
-    public init(settings: AppSettings = .shared, permissions: PermissionsManager = .shared) {
+    public init(settings: AppSettings, permissions: PermissionsManager) {
         self.settings = settings
         self.permissions = permissions
+    }
+    
+    public init() {
+        self.init(settings: .shared, permissions: .shared)
     }
     
     public var body: some View {

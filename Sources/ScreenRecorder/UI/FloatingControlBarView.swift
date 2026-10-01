@@ -47,10 +47,43 @@ public struct FloatingControlBarView: View {
                 CaptureModeButton(
                     mode: .selectedWindow,
                     currentMode: appState.captureMode,
-                    title: "Window",
+                    title: "Selected Window",
                     iconName: "macwindow"
                 ) {
-                    appState.setCaptureMode(.selectedWindow)
+                    if appState.captureMode == .selectedWindow && !appState.isShowingWindowSelection {
+                        appState.isShowingWindowSelection = true
+                        appState.refreshAvailableSources()
+                    } else {
+                        appState.setCaptureMode(.selectedWindow)
+                    }
+                }
+                .contextMenu {
+                    Button("Choose Window to Record (Zoom style)...") {
+                        appState.setCaptureMode(.selectedWindow)
+                        appState.isShowingWindowSelection = true
+                        appState.refreshAvailableSources()
+                    }
+                    Divider()
+                    if appState.availableWindows.isEmpty {
+                        Text("No open windows detected")
+                    } else {
+                        ForEach(appState.availableWindows, id: \.windowID) { win in
+                            let appName = win.owningApplication?.applicationName ?? "App"
+                            let title = win.title ?? ""
+                            let label = title.isEmpty ? appName : "\(appName): \(title)"
+                            Button(action: {
+                                appState.selectedWindow = win
+                                appState.setCaptureMode(.selectedWindow)
+                            }) {
+                                HStack {
+                                    Text(label)
+                                    if appState.selectedWindow?.windowID == win.windowID {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 
                 CaptureModeButton(
@@ -205,7 +238,7 @@ public struct FloatingControlBarView: View {
             } label: {
                 Text("Options")
                     .font(.system(size: 12, weight: .medium))
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(Color.white.opacity(0.08))
                     .cornerRadius(6)
@@ -213,12 +246,20 @@ public struct FloatingControlBarView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             
-            // Format Badge (e.g. "MP4 • HEVC")
+            // Format / Target Badge (e.g. "MP4 • HEVC" or "WIN: Safari")
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(settings.container.rawValue.uppercased()) • \(settings.codec.shortName)")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(.cyan)
-                    .lineLimit(1)
+                if appState.captureMode == .selectedWindow, let win = appState.selectedWindow {
+                    let app = win.owningApplication?.applicationName ?? "Window"
+                    Text("WIN: \(app.uppercased())")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(.green)
+                        .lineLimit(1)
+                } else {
+                    Text("\(settings.container.rawValue.uppercased()) • \(settings.codec.shortName)")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(.cyan)
+                        .lineLimit(1)
+                }
                 Text(estimatedSizeHint)
                     .font(.system(size: 9))
                     .foregroundColor(.secondary)
@@ -301,6 +342,7 @@ struct CaptureModeButton: View {
     let iconName: String
     let action: () -> Void
     
+    @State private var isHovering: Bool = false
     var isSelected: Bool { mode == currentMode }
     
     var body: some View {
@@ -308,24 +350,28 @@ struct CaptureModeButton: View {
             VStack(spacing: 3) {
                 Image(systemName: iconName)
                     .font(.system(size: 15, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? .white : .secondary)
+                    .foregroundColor(isSelected ? .white : (isHovering ? .primary : .secondary))
                 
                 Text(title)
                     .font(.system(size: 10, weight: isSelected ? .medium : .regular))
-                    .foregroundColor(isSelected ? .white : .secondary)
+                    .foregroundColor(isSelected ? .white : (isHovering ? .primary : .secondary))
+                    .lineLimit(1)
             }
-            .frame(width: 76, height: 42)
+            .frame(width: 84, height: 42)
             .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? Color.white.opacity(0.16) : Color.clear)
+                    .fill(isSelected ? Color.white.opacity(0.18) : (isHovering ? Color.white.opacity(0.08) : Color.clear))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.white.opacity(0.25) : Color.clear, lineWidth: 1)
+                    .stroke(isSelected ? Color.white.opacity(0.28) : Color.clear, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovering = hovering
+        }
     }
 }
 

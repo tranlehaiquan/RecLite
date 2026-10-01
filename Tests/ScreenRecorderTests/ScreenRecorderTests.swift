@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import CoreGraphics
 import AVFoundation
+import CoreMedia
 @testable import ScreenRecorder
 
 @Suite("ScreenRecorder Video Formats & Compression Tests")
@@ -60,17 +61,17 @@ struct VideoFormatTests {
             codec: .hevc,
             preset: .ultraCompact
         )
-        let defaultMovMbMin = FileSizeEstimator.defaultMacOsMovMegabytesPerMinute(
+        let defaultMacOsMovMbMin = FileSizeEstimator.defaultMacOsMovMegabytesPerMinute(
             resolution: res,
             fps: 60
         )
         
         #expect(hevcMbMin > 0)
-        #expect(defaultMovMbMin > hevcMbMin)
+        #expect(defaultMacOsMovMbMin > hevcMbMin)
         
         let savings = FileSizeEstimator.savingsPercentage(
             ourMbPerMin: hevcMbMin,
-            macOsDefaultMbPerMin: defaultMovMbMin
+            macOsDefaultMbPerMin: defaultMacOsMovMbMin
         )
         // Savings should be between 80% and 98%
         #expect(savings >= 80)
@@ -116,5 +117,71 @@ struct VideoFormatTests {
         #expect(FileSizeEstimator.formatBytes(1024).contains("KB") || FileSizeEstimator.formatBytes(1024).contains("kB"))
         #expect(FileSizeEstimator.formatBytes(10 * 1024 * 1024).contains("MB"))
         #expect(FileSizeEstimator.formatBytes(2 * 1024 * 1024 * 1024).contains("GB"))
+    }
+    
+    @Test("AppState capture mode switching and window selection state")
+    @MainActor
+    func testAppStateWindowSelection() {
+        let appState = AppState.shared
+        
+        // Test switching to selectedWindow mode triggers window selection flag
+        appState.setCaptureMode(.selectedWindow)
+        #expect(appState.captureMode == .selectedWindow)
+        #expect(appState.isShowingWindowSelection == true)
+        
+        // Test cancel
+        appState.cancelWindowSelection()
+        #expect(appState.isShowingWindowSelection == false)
+        
+        // Test selectDisplayOnly
+        appState.selectDisplayOnly(1)
+        #expect(appState.selectedDisplayID == 1)
+        #expect(appState.captureMode == .entireScreen)
+        #expect(appState.isShowingWindowSelection == false)
+    }
+    
+    @Test("AudioMixer buffering and flushing")
+    func testAudioMixerBufferingAndFlushing() {
+        let mixer = AudioMixer()
+        var receivedCount = 0
+        mixer.onMixedBuffer = { buffer in
+            receivedCount += 1
+            let numSamples = CMSampleBufferGetNumSamples(buffer)
+            #expect(numSamples > 0)
+        }
+        
+        // Create a 1-channel mono PCM sample buffer (simulating mic)
+        let sampleCount = 4800
+        var monoASBD = AudioStreamBasicDescription(
+            mSampleRate: 48000,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: 4,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 4,
+            mChannelsPerFrame: 1,
+            mBitsPerChannel: 32,
+            mReserved: 0
+        )
+        var monoFormatDesc: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(allocator: nil, asbd: &monoASBD, layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &monoFormatDesc)
+        
+        var blockBuffer: CMBlockBuffer?
+        let byteCount = sampleCount * MemoryLayout<Float>.size
+        CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: byteCount, blockAllocator: nil, customBlockSource: nil, offsetToData: 0, dataLength: byteCount, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &blockBuffer)
+        CMBlockBufferFillDataBytes(with: 0, blockBuffer: blockBuffer!, offsetIntoDestination: 0, dataLength: byteCount)
+        
+        var timing = CMSampleTimingInfo(duration: CMTime(value: CMTimeValue(sampleCount), timescale: 48000), presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+        var sampleBuffer: CMSampleBuffer?
+        CMSampleBufferCreate(allocator: nil, dataBuffer: blockBuffer!, dataReady: true, makeDataReadyCallback: nil, refcon: nil, formatDescription: monoFormatDesc, sampleCount: sampleCount, sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleSizeEntryCount: 0, sampleSizeArray: nil, sampleBufferOut: &sampleBuffer)
+        
+        #expect(sampleBuffer != nil)
+        if let sbuf = sampleBuffer {
+            mixer.appendBuffer(sbuf)
+            mixer.flush()
+            #expect(receivedCount > 0)
+        }
+        
+        mixer.reset()
     }
 }

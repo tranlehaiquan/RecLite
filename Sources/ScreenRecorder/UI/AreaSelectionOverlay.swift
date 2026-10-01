@@ -1,7 +1,8 @@
 import SwiftUI
 import AppKit
+import Combine
 
-/// SwiftUI Representable wrapper for the native AppKit Area Selection View
+/// SwiftUI Representable wrapper for the native AppKit Area Selection View (optional wrapper)
 public struct AreaSelectionOverlayView: NSViewRepresentable {
     @ObservedObject var appState: AppState
     
@@ -15,11 +16,7 @@ public struct AreaSelectionOverlayView: NSViewRepresentable {
     }
     
     public func updateNSView(_ nsView: AreaSelectionNSView, context: Context) {
-        nsView.appState = appState
-        if let crop = appState.selectedCropRect, crop != nsView.rect && !nsView.isDragging {
-            nsView.rect = crop
-            nsView.needsDisplay = true
-        }
+        // AppState is directly observed inside AreaSelectionNSView via Combine
     }
 }
 
@@ -28,6 +25,7 @@ public struct AreaSelectionOverlayView: NSViewRepresentable {
 public final class AreaSelectionNSView: NSView {
     var appState: AppState
     var rect: CGRect = .zero
+    private var cancellables = Set<AnyCancellable>()
     
     // Dragging state
     private enum DragMode {
@@ -83,6 +81,7 @@ public final class AreaSelectionNSView: NSView {
     // Coordinates: Flipped so (0,0) is Top-Left, exactly matching ScreenCaptureKit
     public override var isFlipped: Bool { true }
     public override var acceptsFirstResponder: Bool { true }
+    public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     
     public init(appState: AppState) {
         self.appState = appState
@@ -91,39 +90,58 @@ public final class AreaSelectionNSView: NSView {
         if let crop = appState.selectedCropRect {
             self.rect = crop
         }
+        
+        // Directly observe crop changes without SwiftUI layout loops
+        appState.$selectedCropRect
+            .receive(on: RunLoop.main)
+            .sink { [weak self] crop in
+                guard let self = self, !self.isDragging else { return }
+                if let crop = crop, crop != self.rect {
+                    self.rect = crop
+                    self.needsDisplay = true
+                }
+            }
+            .store(in: &cancellables)
     }
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
     
+    public func prepareForDisplay() {
+        let viewBounds = bounds.width > 50 && bounds.height > 50 ? bounds : (window?.screen?.frame ?? NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900))
+        
+        if let current = appState.selectedCropRect, current.width > 50 && current.height > 50 {
+            // Verify rect is within current viewBounds; re-center if outside
+            if current.minX >= viewBounds.width || current.minY >= viewBounds.height {
+                let w = min(current.width, viewBounds.width * 0.8)
+                let h = min(current.height, viewBounds.height * 0.8)
+                let x = (viewBounds.width - w) / 2.0
+                let y = (viewBounds.height - h) / 2.0
+                let r = CGRect(x: x, y: y, width: w, height: h)
+                self.rect = r
+                self.appState.selectedCropRect = r
+            } else {
+                self.rect = current
+            }
+        } else if rect.width < 50 || rect.height < 50 {
+            let w = min(960.0, max(200.0, viewBounds.width * 0.65))
+            let h = min(540.0, max(150.0, viewBounds.height * 0.65))
+            let x = (viewBounds.width - w) / 2.0
+            let y = (viewBounds.height - h) / 2.0
+            let r = CGRect(x: x, y: y, width: w, height: h)
+            self.rect = r
+            self.appState.selectedCropRect = r
+        }
+        window?.makeFirstResponder(self)
+        needsDisplay = true
+    }
+    
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        window?.makeFirstResponder(self)
-        if rect == .zero && bounds.width > 0 && bounds.height > 0 {
-            initializeDefaultRect()
+        if window != nil {
+            prepareForDisplay()
         }
-    }
-    
-    public override func layout() {
-        super.layout()
-        if rect == .zero && bounds.width > 0 && bounds.height > 0 {
-            initializeDefaultRect()
-        }
-    }
-    
-    private func initializeDefaultRect() {
-        if let current = appState.selectedCropRect, current.width > 50 && current.height > 50 {
-            self.rect = current
-        } else {
-            let w = min(960.0, bounds.width * 0.65)
-            let h = min(540.0, bounds.height * 0.65)
-            let x = (bounds.width - w) / 2.0
-            let y = (bounds.height - h) / 2.0
-            self.rect = CGRect(x: x, y: y, width: w, height: h)
-            appState.selectedCropRect = self.rect
-        }
-        needsDisplay = true
     }
     
     public override func updateTrackingAreas() {

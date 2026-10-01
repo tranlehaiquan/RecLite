@@ -2,6 +2,7 @@ import Foundation
 import ScreenCaptureKit
 import CoreGraphics
 import CoreMedia
+import AppKit
 
 /// High performance ScreenCaptureKit engine
 public final class ScreenCaptureEngine: NSObject, @unchecked Sendable {
@@ -25,10 +26,16 @@ public final class ScreenCaptureEngine: NSObject, @unchecked Sendable {
     }
     
     public static func getAvailableWindows() async throws -> [SCWindow] {
+        let myPID = ProcessInfo.processInfo.processIdentifier
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
         return content.windows.filter { window in
-            guard let title = window.title, !title.isEmpty else { return false }
-            return window.frame.width > 100 && window.frame.height > 100
+            guard window.owningApplication?.processID != myPID else { return false }
+            guard window.windowLayer == 0 else { return false }
+            guard window.isOnScreen else { return false }
+            let title = window.title ?? ""
+            let appName = window.owningApplication?.applicationName ?? ""
+            guard !title.isEmpty || !appName.isEmpty else { return false }
+            return window.frame.width > 120 && window.frame.height > 120
         }
     }
     
@@ -51,27 +58,38 @@ public final class ScreenCaptureEngine: NSObject, @unchecked Sendable {
         let myPID = ProcessInfo.processInfo.processIdentifier
         let myWindows = shareableContent.windows.filter { $0.owningApplication?.processID == myPID }
         
+        var scaleFactor: CGFloat = 1.0
+        
         switch target {
         case .entireScreen(let displayID):
             guard let display = shareableContent.displays.first(where: { $0.displayID == displayID }) ?? shareableContent.displays.first else {
                 throw NSError(domain: "ScreenCaptureEngine", code: 1, userInfo: [NSLocalizedDescriptionKey: "Target display not found"])
             }
             filter = SCContentFilter(display: display, excludingWindows: myWindows)
-            originalSize = CGSize(width: display.width, height: display.height)
+            scaleFactor = NSScreen.screens.first(where: {
+                let screenNum = ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+                return screenNum == displayID
+            })?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+            originalSize = CGSize(width: CGFloat(display.width) * scaleFactor, height: CGFloat(display.height) * scaleFactor)
             
         case .window(let windowID, _):
             guard let window = shareableContent.windows.first(where: { $0.windowID == windowID }) else {
                 throw NSError(domain: "ScreenCaptureEngine", code: 2, userInfo: [NSLocalizedDescriptionKey: "Target window not found"])
             }
             filter = SCContentFilter(desktopIndependentWindow: window)
-            originalSize = window.frame.size
+            scaleFactor = NSScreen.main?.backingScaleFactor ?? 2.0
+            originalSize = CGSize(width: window.frame.size.width * scaleFactor, height: window.frame.size.height * scaleFactor)
             
         case .area(let rect, let displayID):
             guard let display = shareableContent.displays.first(where: { $0.displayID == displayID }) ?? shareableContent.displays.first else {
                 throw NSError(domain: "ScreenCaptureEngine", code: 3, userInfo: [NSLocalizedDescriptionKey: "Target display not found"])
             }
             filter = SCContentFilter(display: display, excludingWindows: myWindows)
-            originalSize = rect.size
+            scaleFactor = NSScreen.screens.first(where: {
+                let screenNum = ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+                return screenNum == displayID
+            })?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+            originalSize = CGSize(width: rect.size.width * scaleFactor, height: rect.size.height * scaleFactor)
             cropRect = rect
         }
         
@@ -89,6 +107,7 @@ public final class ScreenCaptureEngine: NSObject, @unchecked Sendable {
         config.capturesAudio = captureSystemAudio
         config.sampleRate = 48000
         config.channelCount = 2
+        config.excludesCurrentProcessAudio = true
         
         if let crop = cropRect {
             config.sourceRect = crop

@@ -11,7 +11,18 @@ public struct AreaRecordingFrameView: View {
     
     public var body: some View {
         GeometryReader { geo in
-            if let rect = appState.selectedCropRect {
+            let frameRect: CGRect? = {
+                switch appState.captureMode {
+                case .selectedArea:
+                    return appState.selectedCropRect
+                case .selectedWindow:
+                    return appState.selectedWindow?.frame
+                default:
+                    return nil
+                }
+            }()
+            
+            if let rect = frameRect {
                 ZStack(alignment: .topLeading) {
                     // 1. Subtle dark drop shadow boundary
                     Rectangle()

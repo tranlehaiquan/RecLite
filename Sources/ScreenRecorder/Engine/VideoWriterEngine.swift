@@ -1,35 +1,37 @@
 import Foundation
 import AVFoundation
-import AppKit
 import CoreMedia
-import VideoToolbox
+import AppKit
 
-/// Manages AVAssetWriter pipeline with hardware-accelerated encoding
+/// High-performance video and audio writer powered by AVAssetWriter
 public final class VideoWriterEngine: @unchecked Sendable {
     
-    // MARK: - Properties
+    // MARK: - Configuration
     
-    private let outputURL: URL
-    private let container: VideoContainer
-    private let codec: VideoCodec
-    private let targetDimensions: CGSize
-    private let fps: Int
-    private let bitrate: Int
-    private let hasAudio: Bool
+    public let outputURL: URL
+    public let container: VideoContainer
+    public let codec: VideoCodec
+    public let targetDimensions: CGSize
+    public let fps: Int
+    public let bitrate: Int
+    public let hasAudio: Bool
+    
+    // MARK: - State
     
     private var assetWriter: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
-    private var audioInput: AVAssetWriterInput?
     private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+    private var audioInput: AVAssetWriterInput?
     
     private let writerQueue = DispatchQueue(label: "com.screenrecorder.writerQueue", qos: .userInitiated)
-    private var isSessionStarted = false
+    
+    private var isWriting: Bool = false
+    private var isSessionStarted: Bool = false
     private var sessionStartTime: CMTime = .invalid
     private var lastVideoTime: CMTime = .invalid
     private var lastAudioTime: CMTime = .invalid
     
     public private(set) var bytesWritten: Int64 = 0
-    public private(set) var isWriting: Bool = false
     
     // MARK: - Initializer
     
@@ -40,28 +42,21 @@ public final class VideoWriterEngine: @unchecked Sendable {
         dimensions: CGSize,
         fps: Int,
         bitrate: Int,
-        hasAudio: Bool
+        hasAudio: Bool = false
     ) {
         self.outputURL = outputURL
         self.container = container
         self.codec = codec
-        // Dimensions must be even integers for video encoders
-        let width = Int(dimensions.width) + (Int(dimensions.width) % 2)
-        let height = Int(dimensions.height) + (Int(dimensions.height) % 2)
-        self.targetDimensions = CGSize(width: max(2, width), height: max(2, height))
+        self.targetDimensions = dimensions
         self.fps = fps
         self.bitrate = bitrate
         self.hasAudio = hasAudio
     }
     
-    // MARK: - Setup & Start
+    // MARK: - Lifecycle
     
     public func start() throws {
-        // Ensure parent directory exists
-        let parentDir = outputURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
-        
-        // Remove existing file if any
+        // Remove existing file at path if any
         if FileManager.default.fileExists(atPath: outputURL.path) {
             try FileManager.default.removeItem(at: outputURL)
         }
@@ -71,12 +66,14 @@ public final class VideoWriterEngine: @unchecked Sendable {
         // 1. Configure Video Input
         var compressionProps: [String: Any] = [
             AVVideoAverageBitRateKey: bitrate,
-            AVVideoMaxKeyFrameIntervalKey: fps * 2,
-            AVVideoExpectedSourceFrameRateKey: fps
+            AVVideoExpectedSourceFrameRateKey: fps,
+            AVVideoMaxKeyFrameIntervalKey: fps * 2 // Keyframe every 2 seconds
         ]
         
         if codec == .h264 {
             compressionProps[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel
+        } else if codec == .hevc {
+            compressionProps[AVVideoProfileLevelKey] = kVTProfileLevel_HEVC_Main_AutoLevel as String
         }
         
         var videoSettings: [String: Any] = [
@@ -111,11 +108,17 @@ public final class VideoWriterEngine: @unchecked Sendable {
         // 2. Configure Audio Input (if enabled)
         var aInput: AVAssetWriterInput?
         if hasAudio {
+            var channelLayout = AudioChannelLayout()
+            memset(&channelLayout, 0, MemoryLayout<AudioChannelLayout>.size)
+            channelLayout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
+            let channelLayoutData = Data(bytes: &channelLayout, count: MemoryLayout<AudioChannelLayout>.size)
+            
             let audioSettings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: 48000,
                 AVNumberOfChannelsKey: 2,
-                AVEncoderBitRateKey: 160_000
+                AVEncoderBitRateKey: 160_000,
+                AVChannelLayoutKey: channelLayoutData
             ]
             let audioIn = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
             audioIn.expectsMediaDataInRealTime = true
@@ -136,6 +139,9 @@ public final class VideoWriterEngine: @unchecked Sendable {
         self.audioInput = aInput
         self.isWriting = true
         self.isSessionStarted = false
+        self.sessionStartTime = .invalid
+        self.lastVideoTime = .invalid
+        self.lastAudioTime = .invalid
     }
     
     // MARK: - Frame Append
@@ -170,28 +176,69 @@ public final class VideoWriterEngine: @unchecked Sendable {
             if adaptor.append(pixelBuffer, withPresentationTime: presentationTime) {
                 self.lastVideoTime = presentationTime
                 self.updateBytesWritten()
+            } else if writer.status == .failed {
+                print("[VideoWriterEngine] Video append failed: \(String(describing: writer.error))")
             }
         }
     }
     
     public func appendAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
         writerQueue.async { [weak self] in
-            guard let self = self, self.isWriting, let aInput = self.audioInput else { return }
-            
-            // Only append audio after video session has begun
-            guard self.isSessionStarted else { return }
+            guard let self = self, self.isWriting, let aInput = self.audioInput, let writer = self.assetWriter else { return }
             
             let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-            guard pts.isValid, pts >= self.sessionStartTime else { return }
+            guard pts.isValid else { return }
             
-            // AVAssetWriter requires strictly increasing timestamps
+            // If session hasn't started yet, audio can start the session
+            if !self.isSessionStarted {
+                writer.startSession(atSourceTime: pts)
+                self.sessionStartTime = pts
+                self.isSessionStarted = true
+            }
+            
+            // Ensure audio is standardized to Stereo Float32
+            guard let stereoBuffer = self.ensureStereoSampleBuffer(sampleBuffer) else { return }
+            let bufferDuration = CMSampleBufferGetDuration(sampleBuffer)
+            
+            // Check for initial gap between session start and first audio buffer
+            if !self.lastAudioTime.isValid {
+                if pts > self.sessionStartTime {
+                    let gap = CMTimeSubtract(pts, self.sessionStartTime)
+                    if CMTimeGetSeconds(gap) > 0.02 {
+                        self.appendSilence(from: self.sessionStartTime, to: pts, input: aInput)
+                    }
+                }
+            } else {
+                // If there's an intermediate gap of more than 150ms (e.g. system audio paused), fill with silence
+                let expectedTime = self.lastAudioTime
+                if pts > expectedTime {
+                    let gap = CMTimeSubtract(pts, expectedTime)
+                    if CMTimeGetSeconds(gap) > 0.15 {
+                        self.appendSilence(from: expectedTime, to: pts, input: aInput)
+                    }
+                }
+            }
+            
+            // Calculate adjusted PTS if needed to ensure strictly increasing timestamps
+            var finalPTS = pts
             if self.lastAudioTime.isValid && pts <= self.lastAudioTime {
-                return
+                finalPTS = CMTimeAdd(self.lastAudioTime, CMTime(value: 1, timescale: 48000))
+            }
+            
+            // If timestamp had to be adjusted, recreate with new timing
+            let bufferToAppend: CMSampleBuffer
+            if CMTimeCompare(finalPTS, pts) != 0 {
+                bufferToAppend = self.retimedSampleBuffer(stereoBuffer, newPTS: finalPTS, duration: bufferDuration) ?? stereoBuffer
+            } else {
+                bufferToAppend = stereoBuffer
             }
             
             if aInput.isReadyForMoreMediaData {
-                if aInput.append(sampleBuffer) {
-                    self.lastAudioTime = pts
+                if aInput.append(bufferToAppend) {
+                    let dur = bufferDuration.isValid && CMTimeGetSeconds(bufferDuration) > 0 ? bufferDuration : CMTime(value: Int64(CMSampleBufferGetNumSamples(bufferToAppend)), timescale: 48000)
+                    self.lastAudioTime = CMTimeAdd(finalPTS, dur)
+                } else if writer.status == .failed {
+                    print("[VideoWriterEngine] Audio append failed: \(String(describing: writer.error))")
                 }
             }
         }
@@ -202,6 +249,237 @@ public final class VideoWriterEngine: @unchecked Sendable {
            let size = attrs[.size] as? NSNumber {
             self.bytesWritten = size.int64Value
         }
+    }
+    
+    // MARK: - Audio Format Normalization & Silence Generation
+    
+    private func ensureStereoSampleBuffer(_ sampleBuffer: CMSampleBuffer) -> CMSampleBuffer? {
+        guard let desc = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc)?.pointee else {
+            return sampleBuffer
+        }
+        
+        // Already 2 channels stereo
+        if asbd.mChannelsPerFrame == 2 {
+            return sampleBuffer
+        }
+        
+        // Handle 1 channel mono -> 2 channel stereo
+        guard asbd.mChannelsPerFrame == 1,
+              let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return sampleBuffer }
+        
+        var length: Int = 0
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        let status = CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
+        guard status == noErr, let ptr = dataPointer, length > 0 else { return sampleBuffer }
+        
+        let sampleCount = CMSampleBufferGetNumSamples(sampleBuffer)
+        guard sampleCount > 0 else { return sampleBuffer }
+        
+        var stereoSamples = [Float](repeating: 0, count: sampleCount * 2)
+        if asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
+            let floats = ptr.withMemoryRebound(to: Float.self, capacity: sampleCount) { UnsafeBufferPointer(start: $0, count: sampleCount) }
+            for i in 0..<sampleCount {
+                let val = floats[i]
+                stereoSamples[i * 2] = val
+                stereoSamples[i * 2 + 1] = val
+            }
+        } else {
+            let ints = ptr.withMemoryRebound(to: Int16.self, capacity: sampleCount) { UnsafeBufferPointer(start: $0, count: sampleCount) }
+            for i in 0..<sampleCount {
+                let val = Float(ints[i]) / 32768.0
+                stereoSamples[i * 2] = val
+                stereoSamples[i * 2 + 1] = val
+            }
+        }
+        
+        var stereoASBD = AudioStreamBasicDescription(
+            mSampleRate: asbd.mSampleRate > 0 ? asbd.mSampleRate : 48000,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: 8,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 8,
+            mChannelsPerFrame: 2,
+            mBitsPerChannel: 32,
+            mReserved: 0
+        )
+        
+        var channelLayout = AudioChannelLayout()
+        memset(&channelLayout, 0, MemoryLayout<AudioChannelLayout>.size)
+        channelLayout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
+        
+        var stereoFormatDesc: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(
+            allocator: nil,
+            asbd: &stereoASBD,
+            layoutSize: MemoryLayout<AudioChannelLayout>.size,
+            layout: &channelLayout,
+            magicCookieSize: 0,
+            magicCookie: nil,
+            extensions: nil,
+            formatDescriptionOut: &stereoFormatDesc
+        )
+        guard let sDesc = stereoFormatDesc else { return sampleBuffer }
+        
+        let byteCount = stereoSamples.count * MemoryLayout<Float>.size
+        var newBlockBuffer: CMBlockBuffer?
+        stereoSamples.withUnsafeBytes { raw in
+            CMBlockBufferCreateWithMemoryBlock(
+                allocator: nil,
+                memoryBlock: nil,
+                blockLength: byteCount,
+                blockAllocator: nil,
+                customBlockSource: nil,
+                offsetToData: 0,
+                dataLength: byteCount,
+                flags: 0,
+                blockBufferOut: &newBlockBuffer
+            )
+            CMBlockBufferReplaceDataBytes(with: raw.baseAddress!, blockBuffer: newBlockBuffer!, offsetIntoDestination: 0, dataLength: byteCount)
+        }
+        guard let nb = newBlockBuffer else { return sampleBuffer }
+        
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let duration = CMSampleBufferGetDuration(sampleBuffer)
+        var timing = CMSampleTimingInfo(duration: duration, presentationTimeStamp: pts, decodeTimeStamp: .invalid)
+        
+        var outBuffer: CMSampleBuffer?
+        CMSampleBufferCreate(
+            allocator: nil,
+            dataBuffer: nb,
+            dataReady: true,
+            makeDataReadyCallback: nil,
+            refcon: nil,
+            formatDescription: sDesc,
+            sampleCount: sampleCount,
+            sampleTimingEntryCount: 1,
+            sampleTimingArray: &timing,
+            sampleSizeEntryCount: 0,
+            sampleSizeArray: nil,
+            sampleBufferOut: &outBuffer
+        )
+        return outBuffer ?? sampleBuffer
+    }
+    
+    private func retimedSampleBuffer(_ sbuf: CMSampleBuffer, newPTS: CMTime, duration: CMTime) -> CMSampleBuffer? {
+        guard let desc = CMSampleBufferGetFormatDescription(sbuf),
+              let block = CMSampleBufferGetDataBuffer(sbuf) else { return nil }
+        let sampleCount = CMSampleBufferGetNumSamples(sbuf)
+        var timing = CMSampleTimingInfo(duration: duration, presentationTimeStamp: newPTS, decodeTimeStamp: .invalid)
+        
+        var out: CMSampleBuffer?
+        CMSampleBufferCreate(
+            allocator: nil,
+            dataBuffer: block,
+            dataReady: true,
+            makeDataReadyCallback: nil,
+            refcon: nil,
+            formatDescription: desc,
+            sampleCount: sampleCount,
+            sampleTimingEntryCount: 1,
+            sampleTimingArray: &timing,
+            sampleSizeEntryCount: 0,
+            sampleSizeArray: nil,
+            sampleBufferOut: &out
+        )
+        return out
+    }
+    
+    private func appendSilence(from startPTS: CMTime, to endPTS: CMTime, input: AVAssetWriterInput) {
+        let diff = CMTimeSubtract(endPTS, startPTS)
+        let totalSeconds = CMTimeGetSeconds(diff)
+        guard totalSeconds > 0.005 else { return }
+        
+        var currentPTS = startPTS
+        let maxChunkSeconds: Double = 1.0
+        while CMTimeCompare(currentPTS, endPTS) < 0 {
+            let nextPTS = CMTimeMinimum(CMTimeAdd(currentPTS, CMTime(seconds: maxChunkSeconds, preferredTimescale: 48000)), endPTS)
+            if let silenceBuffer = makeSilenceBuffer(startPTS: currentPTS, endPTS: nextPTS) {
+                if input.isReadyForMoreMediaData {
+                    input.append(silenceBuffer)
+                }
+            }
+            currentPTS = nextPTS
+        }
+        self.lastAudioTime = endPTS
+    }
+    
+    private func makeSilenceBuffer(startPTS: CMTime, endPTS: CMTime) -> CMSampleBuffer? {
+        let diff = CMTimeSubtract(endPTS, startPTS)
+        let seconds = CMTimeGetSeconds(diff)
+        guard seconds > 0.001 else { return nil }
+        
+        let sampleRate: Double = 48000
+        let sampleCount = max(1, Int(round(seconds * sampleRate)))
+        
+        var stereoASBD = AudioStreamBasicDescription(
+            mSampleRate: sampleRate,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: 8,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 8,
+            mChannelsPerFrame: 2,
+            mBitsPerChannel: 32,
+            mReserved: 0
+        )
+        
+        var channelLayout = AudioChannelLayout()
+        memset(&channelLayout, 0, MemoryLayout<AudioChannelLayout>.size)
+        channelLayout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
+        
+        var formatDesc: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(
+            allocator: nil,
+            asbd: &stereoASBD,
+            layoutSize: MemoryLayout<AudioChannelLayout>.size,
+            layout: &channelLayout,
+            magicCookieSize: 0,
+            magicCookie: nil,
+            extensions: nil,
+            formatDescriptionOut: &formatDesc
+        )
+        guard let desc = formatDesc else { return nil }
+        
+        let byteCount = sampleCount * 2 * MemoryLayout<Float>.size
+        var blockBuffer: CMBlockBuffer?
+        CMBlockBufferCreateWithMemoryBlock(
+            allocator: nil,
+            memoryBlock: nil,
+            blockLength: byteCount,
+            blockAllocator: nil,
+            customBlockSource: nil,
+            offsetToData: 0,
+            dataLength: byteCount,
+            flags: kCMBlockBufferAssureMemoryNowFlag,
+            blockBufferOut: &blockBuffer
+        )
+        guard let block = blockBuffer else { return nil }
+        CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0, dataLength: byteCount)
+        
+        var timing = CMSampleTimingInfo(
+            duration: diff,
+            presentationTimeStamp: startPTS,
+            decodeTimeStamp: .invalid
+        )
+        
+        var outBuffer: CMSampleBuffer?
+        CMSampleBufferCreate(
+            allocator: nil,
+            dataBuffer: block,
+            dataReady: true,
+            makeDataReadyCallback: nil,
+            refcon: nil,
+            formatDescription: desc,
+            sampleCount: sampleCount,
+            sampleTimingEntryCount: 1,
+            sampleTimingArray: &timing,
+            sampleSizeEntryCount: 0,
+            sampleSizeArray: nil,
+            sampleBufferOut: &outBuffer
+        )
+        return outBuffer
     }
     
     // MARK: - Finish Writing
@@ -228,6 +506,17 @@ public final class VideoWriterEngine: @unchecked Sendable {
                         userInfo: [NSLocalizedDescriptionKey: "Recording was too short or no video frames were captured. Please check Screen Recording permissions in System Settings."]
                     ))
                     return
+                }
+                
+                // If audio was enabled, ensure audio track finishes cleanly up to the last video time
+                if let aInput = self.audioInput, self.hasAudio, self.lastVideoTime.isValid {
+                    if !self.lastAudioTime.isValid {
+                        // No audio samples were ever received; fill full duration with silence
+                        self.appendSilence(from: self.sessionStartTime, to: self.lastVideoTime, input: aInput)
+                    } else if self.lastAudioTime < self.lastVideoTime {
+                        // Audio ended earlier than video; pad silence to match video length
+                        self.appendSilence(from: self.lastAudioTime, to: self.lastVideoTime, input: aInput)
+                    }
                 }
                 
                 self.videoInput?.markAsFinished()

@@ -3,6 +3,19 @@ import SwiftUI
 import ScreenCaptureKit
 import Combine
 
+/// NSPanel subclass that allows borderless panels to become key window and receive keyboard events
+final class KeyablePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
+/// NSHostingView subclass that accepts mouse clicks immediately even when the panel is inactive or not the key window
+final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        return true
+    }
+}
+
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     
@@ -12,6 +25,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     // Windows / Panels
     private var floatingBarPanel: NSPanel?
     private var areaSelectionPanel: NSPanel?
+    private var windowSelectionPanel: NSWindow?
     private var countdownPanel: NSPanel?
     private var recordingHUDPanel: NSPanel?
     private var areaRecordingFramePanel: NSPanel?
@@ -25,12 +39,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     public func applicationDidFinishLaunching(_ notification: Notification) {
         // App is accessory / floating agent
         NSApp.setActivationPolicy(.accessory)
+        NSWindow.allowsAutomaticWindowTabbing = false
         
         setupStatusBar()
         setupFloatingBarPanel()
         setupCountdownPanel()
         setupRecordingHUDPanel()
         setupAreaSelectionPanel()
+        setupWindowSelectionPanel()
         setupAreaRecordingFramePanel()
         setupCompletionPanel()
         
@@ -79,6 +95,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    // MARK: - Screen Discovery Helper
+    
+    private var targetScreen: NSScreen? {
+        if let barScreen = floatingBarPanel?.screen {
+            return barScreen
+        }
+        let mouseLoc = NSEvent.mouseLocation
+        return NSScreen.screens.first(where: { NSMouseInRect(mouseLoc, $0.frame, false) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+    }
+    
     // MARK: - Floating Control Bar Panel (macOS Cmd+Shift+5 style)
     
     private func setupFloatingBarPanel() {
@@ -91,19 +119,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.level = .popUpMenu // Always above selection overlay
         panel.isFloatingPanel = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.isMovableByWindowBackground = true
         
-        let hostingView = NSHostingView(rootView: FloatingControlBarView(appState: appState))
+        // Use FirstMouseHostingView so clicks on inactive floating bar register immediately
+        let hostingView = FirstMouseHostingView(rootView: FloatingControlBarView(appState: appState))
         panel.contentView = hostingView
         
         self.floatingBarPanel = panel
     }
     
     public func showFloatingBar() {
-        guard let panel = floatingBarPanel, let screen = NSScreen.main else { return }
+        guard let panel = floatingBarPanel, let screen = targetScreen ?? NSScreen.main else { return }
         
         panel.setContentSize(NSSize(width: 750, height: 60))
         
@@ -113,7 +143,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         let y = screenRect.minY + 40
         panel.setFrameOrigin(NSPoint(x: x, y: y))
         
-        panel.orderFront(nil)
+        panel.orderFrontRegardless()
     }
     
     public func hideFloatingBar() {
@@ -123,45 +153,112 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Area Selection Overlay Panel
     
     private func setupAreaSelectionPanel() {
-        guard let screen = NSScreen.main else { return }
+        guard let screen = targetScreen ?? NSScreen.main else { return }
         
-        let panel = NSPanel(
+        let panel = KeyablePanel(
             contentRect: screen.frame,
             styleMask: [.borderless, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating // Below floating control bar
+        // High level directly below floating control bar (.popUpMenu), well above all applications
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.popUpMenuWindow)) - 1)
+        panel.isFloatingPanel = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.ignoresMouseEvents = false
         panel.acceptsMouseMovedEvents = true
         
-        let hostingView = NSHostingView(rootView: AreaSelectionOverlayView(appState: appState))
-        panel.contentView = hostingView
+        // Directly use pure AppKit AreaSelectionNSView (no NSHostingView layout recursion)
+        let areaView = AreaSelectionNSView(appState: appState)
+        panel.contentView = areaView
         
         self.areaSelectionPanel = panel
     }
     
     private func showAreaSelection() {
-        if let screen = NSScreen.main, let panel = areaSelectionPanel {
-            panel.setFrame(screen.frame, display: true)
-            panel.makeKeyAndOrderFront(nil)
-            // Ensure floating bar stays visible and interactable above the dimmed overlay
-            floatingBarPanel?.orderFront(nil)
+        guard let screen = targetScreen ?? NSScreen.main, let panel = areaSelectionPanel else { return }
+        if let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID {
+            appState.selectedDisplayID = screenNumber
         }
+        panel.setFrame(screen.frame, display: true)
+        if let areaView = panel.contentView as? AreaSelectionNSView {
+            areaView.prepareForDisplay()
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        panel.orderFrontRegardless()
+        panel.makeKeyAndOrderFront(nil)
+        panel.makeFirstResponder(panel.contentView)
+        // Ensure floating bar stays visible and interactable above the dimmed overlay
+        floatingBarPanel?.orderFrontRegardless()
     }
     
     private func hideAreaSelection() {
         areaSelectionPanel?.orderOut(nil)
     }
     
+    // MARK: - Window Selection Window (Zoom-style modal picker)
+    
+    private func setupWindowSelectionPanel() {
+        let win = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 840, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        win.title = "Select Window to Record"
+        win.minSize = NSSize(width: 660, height: 480)
+        win.isReleasedWhenClosed = false
+        win.level = .floating
+        win.center()
+        
+        let hostingView = NSHostingView(rootView: WindowPickerView(appState: appState))
+        win.contentView = hostingView
+        
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: win,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                if self?.appState.isShowingWindowSelection == true {
+                    self?.appState.isShowingWindowSelection = false
+                }
+            }
+        }
+        
+        self.windowSelectionPanel = win
+    }
+    
+    private func showWindowSelection() {
+        if windowSelectionPanel == nil {
+            setupWindowSelectionPanel()
+        }
+        guard let win = windowSelectionPanel else { return }
+        
+        if let screen = targetScreen ?? NSScreen.main {
+            let screenRect = screen.visibleFrame
+            let x = screenRect.midX - (win.frame.width / 2)
+            let y = screenRect.midY - (win.frame.height / 2)
+            win.setFrameOrigin(NSPoint(x: x, y: y))
+        }
+        
+        NSApp.activate(ignoringOtherApps: true)
+        win.makeKeyAndOrderFront(nil)
+        win.orderFrontRegardless()
+    }
+    
+    private func hideWindowSelection() {
+        windowSelectionPanel?.orderOut(nil)
+    }
+    
     // MARK: - Active Area Recording Frame Panel (Shows boundary during recording)
     
     private func setupAreaRecordingFramePanel() {
-        guard let screen = NSScreen.main else { return }
+        guard let screen = targetScreen ?? NSScreen.main else { return }
         
         let panel = NSPanel(
             contentRect: screen.frame,
@@ -169,8 +266,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.popUpMenuWindow)) - 1)
+        panel.isFloatingPanel = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -183,9 +282,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func showAreaRecordingFrame() {
-        guard let screen = NSScreen.main, let panel = areaRecordingFramePanel else { return }
+        guard let screen = targetScreen ?? NSScreen.main, let panel = areaRecordingFramePanel else { return }
         panel.setFrame(screen.frame, display: true)
-        panel.orderFront(nil)
+        panel.orderFrontRegardless()
     }
     
     private func hideAreaRecordingFrame() {
@@ -201,9 +300,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        panel.level = .popUpMenu
         panel.isFloatingPanel = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -215,13 +315,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func showCountdown() {
-        guard let panel = countdownPanel, let screen = NSScreen.main else { return }
+        guard let panel = countdownPanel, let screen = targetScreen ?? NSScreen.main else { return }
         panel.setContentSize(NSSize(width: 140, height: 140))
         let screenRect = screen.visibleFrame
         let x = screenRect.midX - 70
         let y = screenRect.midY - 70
         panel.setFrameOrigin(NSPoint(x: x, y: y))
-        panel.orderFront(nil)
+        panel.orderFrontRegardless()
     }
     
     private func hideCountdown() {
@@ -237,9 +337,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        panel.level = .popUpMenu
         panel.isFloatingPanel = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -252,13 +353,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func showRecordingHUD() {
-        guard let panel = recordingHUDPanel, let screen = NSScreen.main else { return }
+        guard let panel = recordingHUDPanel, let screen = targetScreen ?? NSScreen.main else { return }
         panel.setContentSize(NSSize(width: 260, height: 50))
         let screenRect = screen.visibleFrame
         let x = screenRect.maxX - 260 - 24
         let y = screenRect.maxY - 50 - 24
         panel.setFrameOrigin(NSPoint(x: x, y: y))
-        panel.orderFront(nil)
+        panel.orderFrontRegardless()
     }
     
     private func hideRecordingHUD() {
@@ -274,9 +375,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        panel.level = .popUpMenu
         panel.isFloatingPanel = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -285,7 +387,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func showCompletionCard(result: RecordingResult) {
-        guard let panel = completionPanel, let screen = NSScreen.main else { return }
+        guard let panel = completionPanel, let screen = targetScreen ?? NSScreen.main else { return }
         
         let autoCloseSeconds = Double(appState.settings.autoCloseNotificationSeconds)
         let view = CompletionCardView(result: result, autoCloseSeconds: autoCloseSeconds) { [weak self] in
@@ -305,7 +407,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.setFrameOrigin(NSPoint(x: x, y: y))
         
         panel.alphaValue = 0.0
-        panel.orderFront(nil)
+        panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
             panel.animator().alphaValue = 1.0
@@ -369,14 +471,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.hideFloatingBar()
                     self.hideRecordingHUD()
                     self.showCountdown()
-                    if self.appState.captureMode == .selectedArea {
+                    if self.appState.captureMode == .selectedArea || self.appState.captureMode == .selectedWindow {
                         self.showAreaRecordingFrame()
                     }
                 case .recording:
                     self.hideFloatingBar()
                     self.hideCountdown()
                     self.showRecordingHUD()
-                    if self.appState.captureMode == .selectedArea {
+                    if self.appState.captureMode == .selectedArea || self.appState.captureMode == .selectedWindow {
                         self.showAreaRecordingFrame()
                     }
                 case .paused:
@@ -404,6 +506,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             .store(in: &cancellables)
+            
+        appState.$isShowingWindowSelection
+            .receive(on: RunLoop.main)
+            .sink { [weak self] isShowing in
+                if isShowing {
+                    self?.showWindowSelection()
+                } else {
+                    self?.hideWindowSelection()
+                }
+            }
+            .store(in: &cancellables)
         
         appState.$isShowingResultSheet
             .receive(on: RunLoop.main)
@@ -422,7 +535,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] isShowing in
                 if isShowing {
                     self?.openSettingsWindow()
-                    self?.appState.isShowingSettings = false
+                    DispatchQueue.main.async {
+                        self?.appState.isShowingSettings = false
+                    }
                 }
             }
             .store(in: &cancellables)

@@ -1,38 +1,41 @@
 import Foundation
 import SwiftUI
-import AppKit
 import ScreenCaptureKit
 import AVFoundation
+import AppKit
 
+/// Primary application state orchestrator
 @MainActor
 public final class AppState: ObservableObject {
+    
     public static let shared = AppState()
     
-    // MARK: - Published State
+    // MARK: - Published Properties
     
     @Published public var captureMode: CaptureMode = .entireScreen
     @Published public var recordingState: RecordingState = .idle
-    @Published public var selectedCropRect: CGRect? = nil
     @Published public var selectedDisplayID: CGDirectDisplayID = CGMainDisplayID()
-    @Published public var selectedWindow: SCWindow? = nil
-    
+    @Published public var selectedWindow: SCWindow?
+    @Published public var selectedCropRect: CGRect?
+    @Published public var isMuted: Bool = false
+    @Published public var liveAudioLevel: Float = 0.0
+    @Published public var lastResult: RecordingResult?
+    @Published public var isShowingResultSheet: Bool = false
+    @Published public var isShowingSettings: Bool = false
     @Published public var availableDisplays: [SCDisplay] = []
     @Published public var availableWindows: [SCWindow] = []
     
-    @Published public var liveAudioLevel: Float = 0.0
-    @Published public var liveBytesWritten: Int64 = 0
+    // UI states
     @Published public var liveElapsedTime: TimeInterval = 0
-    @Published public var isMuted: Bool = false
-    
-    @Published public var lastResult: RecordingResult? = nil
-    @Published public var isShowingSettings: Bool = false
-    @Published public var isShowingResultSheet: Bool = false
+    @Published public var liveBytesWritten: Int64 = 0
     @Published public var isShowingAreaSelection: Bool = false
+    @Published public var isShowingWindowSelection: Bool = false
     
     // MARK: - Internal Engines
     
     private let screenEngine = ScreenCaptureEngine()
     private let audioEngine = AudioCaptureEngine()
+    private let audioMixer = AudioMixer()
     private var videoWriter: VideoWriterEngine?
     
     private var timer: Timer?
@@ -84,30 +87,66 @@ public final class AppState: ObservableObject {
         self.captureMode = mode
         if mode == .selectedArea {
             self.isShowingAreaSelection = true
+            self.isShowingWindowSelection = false
+        } else if mode == .selectedWindow {
+            self.isShowingAreaSelection = false
+            self.isShowingWindowSelection = true
+            refreshAvailableSources()
         } else {
             self.isShowingAreaSelection = false
+            self.isShowingWindowSelection = false
         }
     }
     
-    public func toggleRecording() {
-        if recordingState.isRecordingOrPaused {
-            stopRecording()
-        } else {
-            startRecordingFlow()
-        }
+    public func cancelWindowSelection() {
+        self.isShowingWindowSelection = false
+        self.captureMode = .entireScreen
     }
     
-    public func startRecordingFlow() {
-        guard !recordingState.isRecordingOrPaused else { return }
+    public func selectWindow(_ window: SCWindow) {
+        self.selectedWindow = window
+        self.isShowingWindowSelection = false
+    }
+    
+    public func selectWindowOnly(_ window: SCWindow) {
+        self.selectedWindow = window
+        self.captureMode = .selectedWindow
+        self.isShowingWindowSelection = false
+    }
+    
+    public func selectDisplayOnly(_ displayID: CGDirectDisplayID) {
+        self.selectedDisplayID = displayID
+        self.captureMode = .entireScreen
+        self.isShowingWindowSelection = false
+    }
+    
+    public func selectWindowAndStartRecording(_ window: SCWindow) {
+        selectWindowOnly(window)
+        startRecording()
+    }
+    
+    public func selectDisplayAndStartRecording(_ displayID: CGDirectDisplayID) {
+        selectDisplayOnly(displayID)
+        startRecording()
+    }
+    
+    public func dismissResultSheet() {
+        self.isShowingResultSheet = false
+    }
+    
+    public func startRecording() {
+        guard recordingState == .idle else { return }
         
-        // Verify permissions
-        permissions.checkPermissions()
+        // Check screen recording permission first
         guard permissions.hasScreenRecordingPermission else {
-            permissions.requestScreenCapturePermission()
+            recordingState = .failed("Screen Recording permission is required. Please enable it in System Settings > Privacy & Security.")
             return
         }
         
-        // Handle countdown
+        // Hide selection overlays before starting
+        isShowingAreaSelection = false
+        isShowingWindowSelection = false
+        
         let countdown = settings.countdownSeconds
         if countdown > 0 {
             startCountdown(seconds: countdown)
@@ -116,29 +155,50 @@ public final class AppState: ObservableObject {
         }
     }
     
+    public func startRecordingFlow() {
+        startRecording()
+    }
+    
+    public func toggleRecording() {
+        if recordingState.isRecordingOrPaused {
+            stopRecording()
+        } else {
+            startRecording()
+        }
+    }
+    
     private func startCountdown(seconds: Int) {
-        self.countdownRemaining = seconds
-        self.recordingState = .countingDown(remainingSeconds: seconds)
+        countdownRemaining = seconds
+        recordingState = .countingDown(remainingSeconds: seconds)
+        
+        // Pre-warm microphone during countdown if enabled
+        let captureMic = (settings.audioMode == .microphone || settings.audioMode == .both)
+        if captureMic && permissions.hasMicrophonePermission {
+            try? audioEngine.start()
+        }
         
         countdownTimer?.invalidate()
-        countdownTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] timer in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 self.countdownRemaining -= 1
-                if self.countdownRemaining <= 0 {
-                    self.countdownTimer?.invalidate()
+                if self.countdownRemaining > 0 {
+                    self.recordingState = .countingDown(remainingSeconds: self.countdownRemaining)
+                } else {
+                    timer.invalidate()
                     self.countdownTimer = nil
                     self.startActualRecording()
-                } else {
-                    self.recordingState = .countingDown(remainingSeconds: self.countdownRemaining)
                 }
             }
         }
+        RunLoop.main.add(t, forMode: .common)
+        countdownTimer = t
     }
     
     public func cancelCountdown() {
         countdownTimer?.invalidate()
         countdownTimer = nil
+        audioEngine.stop()
         recordingState = .idle
     }
     
@@ -174,7 +234,21 @@ public final class AppState: ObservableObject {
                 let customBitrate = settings.customBitrateMbps
                 let outputURL = settings.generateOutputFileURL()
                 
-                // 1. Start Screen Stream to determine dimensions
+                // 1. Pre-warm and start Audio Engine FIRST if microphone is requested
+                // Starting AVCaptureSession early prevents audio startup lag/silence
+                if captureMic {
+                    if !permissions.hasMicrophonePermission {
+                        _ = await permissions.requestMicrophonePermission()
+                    }
+                    self.isMuted = false
+                    self.audioEngine.isMuted = false
+                    try audioEngine.start()
+                } else {
+                    self.isMuted = true
+                    self.audioEngine.isMuted = true
+                }
+                
+                // 2. Start Screen Stream to determine dimensions
                 let dimensions = try await screenEngine.startCapture(
                     target: target,
                     fps: fpsValue,
@@ -183,7 +257,7 @@ public final class AppState: ObservableObject {
                     captureSystemAudio: captureSystem
                 )
                 
-                // 2. Compute bitrate based on settings & resolution
+                // 3. Compute bitrate based on settings & resolution
                 let bitrate: Int
                 if presetVal == .custom {
                     bitrate = Int(customBitrate * 1_000_000.0)
@@ -195,7 +269,7 @@ public final class AppState: ObservableObject {
                     )
                 }
                 
-                // 3. Initialize Video Writer
+                // 4. Initialize Video Writer
                 let writer = VideoWriterEngine(
                     outputURL: outputURL,
                     container: containerVal,
@@ -209,36 +283,48 @@ public final class AppState: ObservableObject {
                 try writer.start()
                 self.videoWriter = writer
                 
-                // Directly pipe frames and audio to writer (Sendable closures with captured Sendable writer)
+                // 5. Pipe Video Frames
                 self.screenEngine.onVideoSampleBuffer = { [weak writer] sampleBuffer in
                     writer?.appendVideoSampleBuffer(sampleBuffer)
                 }
-                self.screenEngine.onSystemAudioSampleBuffer = { [weak writer] sampleBuffer in
-                    writer?.appendAudioSampleBuffer(sampleBuffer)
-                }
-                self.audioEngine.onAudioSampleBuffer = { [weak writer] sampleBuffer in
-                    writer?.appendAudioSampleBuffer(sampleBuffer)
-                }
                 
-                // 4. Start Microphone if enabled
-                if captureMic {
-                    if !permissions.hasMicrophonePermission {
-                        _ = await permissions.requestMicrophonePermission()
+                // 6. Pipe Audio Stream(s)
+                if captureSystem && captureMic {
+                    // Both System Audio & Microphone: pipe through AudioMixer
+                    self.audioMixer.reset()
+                    self.audioMixer.onMixedBuffer = { [weak writer] mixedBuffer in
+                        writer?.appendAudioSampleBuffer(mixedBuffer)
                     }
-                    self.isMuted = false
-                    self.audioEngine.isMuted = false
-                    try audioEngine.start()
+                    self.screenEngine.onSystemAudioSampleBuffer = { [weak self] sampleBuffer in
+                        self?.audioMixer.appendBuffer(sampleBuffer)
+                    }
+                    self.audioEngine.onAudioSampleBuffer = { [weak self] sampleBuffer in
+                        self?.audioMixer.appendBuffer(sampleBuffer)
+                    }
+                } else if captureMic {
+                    // Microphone only
+                    self.audioEngine.onAudioSampleBuffer = { [weak writer] sampleBuffer in
+                        writer?.appendAudioSampleBuffer(sampleBuffer)
+                    }
+                    self.screenEngine.onSystemAudioSampleBuffer = nil
+                } else if captureSystem {
+                    // System Audio only
+                    self.screenEngine.onSystemAudioSampleBuffer = { [weak writer] sampleBuffer in
+                        writer?.appendAudioSampleBuffer(sampleBuffer)
+                    }
+                    self.audioEngine.onAudioSampleBuffer = nil
                 } else {
-                    self.isMuted = true
-                    self.audioEngine.isMuted = true
+                    self.screenEngine.onSystemAudioSampleBuffer = nil
+                    self.audioEngine.onAudioSampleBuffer = nil
                 }
                 
-                // 5. Update State & Start Timers
+                // 7. Update State & Start Timers
                 self.recordingStartTime = Date()
                 self.liveElapsedTime = 0
                 self.liveBytesWritten = 0
                 self.recordingState = .recording(elapsed: 0, bytesWritten: 0)
                 self.isShowingAreaSelection = false
+                self.isShowingWindowSelection = false
                 
                 self.startElapsedTimer()
                 
@@ -278,7 +364,11 @@ public final class AppState: ObservableObject {
         timer?.invalidate()
         timer = nil
         
+        if settings.audioMode == .both {
+            audioMixer.flush()
+        }
         audioEngine.stop()
+        audioMixer.onMixedBuffer = nil
         screenEngine.onVideoSampleBuffer = nil
         screenEngine.onSystemAudioSampleBuffer = nil
         audioEngine.onAudioSampleBuffer = nil
@@ -320,13 +410,9 @@ public final class AppState: ObservableObject {
         recordingState = .failed(message)
     }
     
-    public func dismissResultSheet() {
-        self.isShowingResultSheet = false
-    }
-    
-    public func copyFileToPasteboard(_ url: URL) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.writeObjects([url as NSURL])
+    private func copyFileToPasteboard(_ url: URL) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([url as NSURL])
     }
 }
