@@ -25,6 +25,10 @@ public final class AppSettings: ObservableObject {
         static let openInPlayerAfterRecord = "app_open_in_player"
         static let autoCloseNotificationSeconds = "app_auto_close_notification_seconds"
         static let suppressInstallPrompt = "app_suppress_install_prompt"
+        static let globalHotkeysEnabled = "app_global_hotkeys_enabled"
+        static let shortcutStartStop = "app_shortcut_start_stop"
+        static let shortcutPauseResume = "app_shortcut_pause_resume"
+        static let shortcutToggleBar = "app_shortcut_toggle_bar"
     }
     
     // MARK: - Published Properties
@@ -104,6 +108,22 @@ public final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(suppressInstallPrompt, forKey: Keys.suppressInstallPrompt) }
     }
     
+    @Published public var globalHotkeysEnabled: Bool {
+        didSet { UserDefaults.standard.set(globalHotkeysEnabled, forKey: Keys.globalHotkeysEnabled) }
+    }
+    
+    @Published public var shortcutStartStop: KeyShortcut {
+        didSet { saveShortcut(shortcutStartStop, forKey: Keys.shortcutStartStop) }
+    }
+    
+    @Published public var shortcutPauseResume: KeyShortcut {
+        didSet { saveShortcut(shortcutPauseResume, forKey: Keys.shortcutPauseResume) }
+    }
+    
+    @Published public var shortcutToggleBar: KeyShortcut {
+        didSet { saveShortcut(shortcutToggleBar, forKey: Keys.shortcutToggleBar) }
+    }
+    
     // MARK: - Initializer
     
     private init() {
@@ -139,6 +159,31 @@ public final class AppSettings: ObservableObject {
         self.openInPlayerAfterRecord = defaults.object(forKey: Keys.openInPlayerAfterRecord) == nil ? true : defaults.bool(forKey: Keys.openInPlayerAfterRecord)
         self.autoCloseNotificationSeconds = defaults.object(forKey: Keys.autoCloseNotificationSeconds) == nil ? 5 : defaults.integer(forKey: Keys.autoCloseNotificationSeconds)
         self.suppressInstallPrompt = defaults.bool(forKey: Keys.suppressInstallPrompt)
+        self.globalHotkeysEnabled = defaults.object(forKey: Keys.globalHotkeysEnabled) == nil ? true : defaults.bool(forKey: Keys.globalHotkeysEnabled)
+        
+        self.shortcutStartStop = AppSettings.loadShortcut(forKey: Keys.shortcutStartStop) ?? KeyShortcut.defaultStartStop
+        self.shortcutPauseResume = AppSettings.loadShortcut(forKey: Keys.shortcutPauseResume) ?? KeyShortcut.defaultPauseResume
+        self.shortcutToggleBar = AppSettings.loadShortcut(forKey: Keys.shortcutToggleBar) ?? KeyShortcut.defaultToggleBar
+    }
+    
+    // MARK: - Shortcut Serialization Helpers
+    
+    private func saveShortcut(_ shortcut: KeyShortcut, forKey key: String) {
+        if let data = try? JSONEncoder().encode(shortcut) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+    
+    private static func loadShortcut(forKey key: String) -> KeyShortcut? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(KeyShortcut.self, from: data)
+    }
+    
+    /// Reset all keyboard shortcuts to their default combinations
+    public func resetShortcutsToDefaults() {
+        self.shortcutStartStop = KeyShortcut.defaultStartStop
+        self.shortcutPauseResume = KeyShortcut.defaultPauseResume
+        self.shortcutToggleBar = KeyShortcut.defaultToggleBar
     }
     
     // MARK: - Computed Properties

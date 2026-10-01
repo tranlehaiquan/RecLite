@@ -27,6 +27,7 @@ public struct SettingsView: View {
                 Text("Size Comparison").tag(1)
                 Text("Audio").tag(2)
                 Text("General").tag(3)
+                Text("Shortcuts").tag(4)
             }
             .pickerStyle(.segmented)
             .padding(16)
@@ -44,6 +45,8 @@ public struct SettingsView: View {
                         audioSettingsSection
                     case 3:
                         generalSettingsSection
+                    case 4:
+                        shortcutsSettingsSection
                     default:
                         EmptyView()
                     }
@@ -51,7 +54,7 @@ public struct SettingsView: View {
                 .padding(20)
             }
         }
-        .frame(width: 520, height: 460)
+        .frame(width: 540, height: 490)
     }
     
     // MARK: - Tab 0: Video & Format Settings
@@ -414,6 +417,142 @@ public struct SettingsView: View {
                     .frame(width: 170)
                 }
                 .padding(.top, 4)
+            }
+        }
+    }
+    
+    // MARK: - Tab 4: Shortcuts Settings (Key Mapping)
+    
+    private var shortcutsSettingsSection: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Toggle("Enable Global Keyboard Shortcuts", isOn: $settings.globalHotkeysEnabled)
+                .font(.headline)
+            
+            Text("Global hotkeys allow you to start, stop, and control recording from anywhere in macOS even when RecLite is running in the background.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            
+            Divider()
+            
+            // Key mapping items
+            VStack(alignment: .leading, spacing: 16) {
+                shortcutRow(
+                    title: "Start / Stop Recording",
+                    description: "Toggle screen recording start and stop",
+                    shortcut: $settings.shortcutStartStop,
+                    presets: [
+                        KeyShortcut.defaultStartStop,
+                        KeyShortcut(keyCode: 15, modifiers: [.command, .option]), // ⌘⌥R
+                        KeyShortcut(keyCode: 15, modifiers: [.control, .option]), // ⌃⌥R
+                        KeyShortcut(keyCode: 1, modifiers: [.command, .shift])    // ⌘⇧S
+                    ]
+                )
+                
+                Divider()
+                
+                shortcutRow(
+                    title: "Pause / Stop Recording",
+                    description: "Pause active recording or stop if currently running",
+                    shortcut: $settings.shortcutPauseResume,
+                    presets: [
+                        KeyShortcut.defaultPauseResume,
+                        KeyShortcut(keyCode: 35, modifiers: [.command, .option]), // ⌘⌥P
+                        KeyShortcut(keyCode: 35, modifiers: [.control, .option]), // ⌃⌥P
+                        KeyShortcut(keyCode: 49, modifiers: [.command, .shift])   // ⌘⇧Space
+                    ]
+                )
+                
+                Divider()
+                
+                shortcutRow(
+                    title: "Toggle Control Bar",
+                    description: "Show or hide the floating recorder control bar",
+                    shortcut: $settings.shortcutToggleBar,
+                    presets: [
+                        KeyShortcut.defaultToggleBar,
+                        KeyShortcut(keyCode: 23, modifiers: [.command, .option]), // ⌘⌥5
+                        KeyShortcut(keyCode: 18, modifiers: [.command, .shift]),  // ⌘⇧1
+                        KeyShortcut(keyCode: 48, modifiers: [.command, .shift])   // ⌘⇧Tab
+                    ]
+                )
+            }
+            .disabled(!settings.globalHotkeysEnabled)
+            .opacity(settings.globalHotkeysEnabled ? 1.0 : 0.5)
+            
+            Divider()
+            
+            HStack {
+                Button("Reset Shortcuts to Defaults") {
+                    settings.resetShortcutsToDefaults()
+                }
+                .disabled(!settings.globalHotkeysEnabled)
+                
+                Spacer()
+                
+                HStack(spacing: 4) {
+                    Image(systemName: "keyboard")
+                        .foregroundColor(.blue)
+                    Text("Global macOS Key Mappings")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+    
+    private func shortcutRow(
+        title: String,
+        description: String,
+        shortcut: Binding<KeyShortcut>,
+        presets: [KeyShortcut]
+    ) -> some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            HStack(spacing: 8) {
+                // Key Badge
+                Text(shortcut.wrappedValue.displayString)
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.accentColor.opacity(0.15))
+                    .foregroundColor(.accentColor)
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
+                    )
+                
+                // Key Mapping Preset Picker Menu
+                Menu {
+                    Text("Select Preset Key Mapping:")
+                    Divider()
+                    ForEach(presets, id: \.self) { p in
+                        Button(action: {
+                            shortcut.wrappedValue = p
+                        }) {
+                            if p == shortcut.wrappedValue {
+                                Text("✓ \(p.displayString)")
+                            } else {
+                                Text(p.displayString)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .imageScale(.medium)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
         }
     }

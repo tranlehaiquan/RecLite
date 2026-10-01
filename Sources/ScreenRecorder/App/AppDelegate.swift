@@ -115,6 +115,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         
         observeStateChanges()
         
+        // Start Global Keyboard Shortcuts Monitoring
+        HotkeyManager.shared.startMonitoring()
+        
         // Initial presentation
         showFloatingBar()
         
@@ -174,10 +177,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     
     public func buildStatusMenu() -> NSMenu {
         let menu = NSMenu(title: "RecLite")
+        let settings = AppSettings.shared
         
         if appState.recordingState.isRecordingOrPaused {
-            let stopItem = NSMenuItem(title: "Stop Recording", action: #selector(stopRecordingAction), keyEquivalent: "s")
-            stopItem.keyEquivalentModifierMask = [.control, .command]
+            let stopShortcut = settings.shortcutStartStop
+            let stopItem = NSMenuItem(title: "Stop Recording", action: #selector(stopRecordingAction), keyEquivalent: stopShortcut.keyEquivalent)
+            stopItem.keyEquivalentModifierMask = stopShortcut.modifierFlags
             stopItem.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: nil)
             stopItem.target = self
             menu.addItem(stopItem)
@@ -186,8 +191,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         
         let barVisible = floatingBarPanel?.isVisible == true
         let toggleBarTitle = barVisible ? "Hide Control Bar" : "Show Control Bar"
-        let toggleBarItem = NSMenuItem(title: toggleBarTitle, action: #selector(toggleFloatingBar), keyEquivalent: "5")
-        toggleBarItem.keyEquivalentModifierMask = [.command, .shift]
+        let toggleShortcut = settings.shortcutToggleBar
+        let toggleBarItem = NSMenuItem(title: toggleBarTitle, action: #selector(toggleFloatingBar), keyEquivalent: toggleShortcut.keyEquivalent)
+        toggleBarItem.keyEquivalentModifierMask = toggleShortcut.modifierFlags
         toggleBarItem.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: nil)
         toggleBarItem.target = self
         menu.addItem(toggleBarItem)
@@ -782,7 +788,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 460),
+            contentRect: NSRect(x: 0, y: 0, width: 540, height: 490),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
