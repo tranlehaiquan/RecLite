@@ -14,6 +14,7 @@ public final class AudioCaptureEngine: NSObject, @unchecked Sendable {
     public var onAudioSampleBuffer: (@Sendable (CMSampleBuffer) -> Void)?
     public var onAudioLevelUpdate: (@Sendable (Float) -> Void)?
     
+    public var isMuted: Bool = false
     public private(set) var isRunning: Bool = false
     
     // MARK: - Lifecycle
@@ -67,6 +68,11 @@ extension AudioCaptureEngine: AVCaptureAudioDataOutputSampleBufferDelegate {
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
+        guard !isMuted else {
+            onAudioLevelUpdate?(0.0)
+            return
+        }
+        
         // Forward sample buffer to video writer
         onAudioSampleBuffer?(sampleBuffer)
         

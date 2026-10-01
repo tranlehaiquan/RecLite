@@ -1,8 +1,31 @@
+# macOS
 .DS_Store
-/.build
-/Packages
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Swift Package Manager & Xcode
+/.build/
+/Packages/
+Package.pins
 xcuserdata/
 DerivedData/
 .swiftpm/configuration/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+*.xcuserstate
+
+# Code Signing & Artifacts
+_CodeSignature/
+**/_CodeSignature/
+*.dSYM/
 .netrc
+
+# IDEs & Editors
+.vscode/
+.idea/
+
+# Logs & Temporary files
+*.log
+*.tmp

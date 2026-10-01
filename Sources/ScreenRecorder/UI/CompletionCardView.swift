@@ -1,15 +1,23 @@
 import SwiftUI
 import AppKit
 
-/// Floating completion sheet displaying recorded file details, thumbnail, and storage savings
+/// Floating completion sheet displaying recorded file details and quick actions
 public struct CompletionCardView: View {
     let result: RecordingResult
+    let autoCloseSeconds: Double
     let onDismiss: () -> Void
     
     @State private var isCopied: Bool = false
+    @State private var isHovered: Bool = false
+    @State private var dismissTask: Task<Void, Never>? = nil
     
-    public init(result: RecordingResult, onDismiss: @escaping () -> Void) {
+    public init(
+        result: RecordingResult,
+        autoCloseSeconds: Double = 5.0,
+        onDismiss: @escaping () -> Void
+    ) {
         self.result = result
+        self.autoCloseSeconds = autoCloseSeconds
         self.onDismiss = onDismiss
     }
     
@@ -19,10 +27,10 @@ public struct CompletionCardView: View {
             HStack {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green)
-                    .font(.system(size: 16))
+                    .font(.system(size: 15))
                 
                 Text("Recording Saved")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                 
                 Spacer()
                 
@@ -102,38 +110,11 @@ public struct CompletionCardView: View {
                 }
             }
             
-            // Storage Savings Banner (Highlighting the core user problem solved!)
-            if result.storageSavedPercentage > 0 {
-                HStack(spacing: 8) {
-                    Image(systemName: "bolt.shield.fill")
-                        .foregroundColor(.green)
-                        .font(.system(size: 13))
-                    
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Saved \(result.storageSavedPercentage)% disk space")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.green)
-                        Text("Default macOS MOV would be ~\(FileSizeEstimator.formatBytes(result.estimatedMacOsMovFileSize))")
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Spacer()
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.green.opacity(0.12))
-                .cornerRadius(8)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.green.opacity(0.25), lineWidth: 1)
-                )
-            }
-            
             // Action Buttons
             HStack(spacing: 8) {
                 Button(action: {
                     NSWorkspace.shared.open(result.fileURL)
+                    onDismiss()
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "play.fill")
@@ -185,7 +166,7 @@ public struct CompletionCardView: View {
                 .help("Copy Video File")
             }
         }
-        .padding(16)
+        .padding(14)
         .frame(width: 360)
         .background(VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow))
         .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -194,6 +175,33 @@ public struct CompletionCardView: View {
                 .stroke(Color.white.opacity(0.18), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.4), radius: 16, y: 6)
+        .onAppear {
+            startAutoCloseTimer()
+        }
+        .onDisappear {
+            dismissTask?.cancel()
+            dismissTask = nil
+        }
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                dismissTask?.cancel()
+                dismissTask = nil
+            } else {
+                startAutoCloseTimer()
+            }
+        }
+    }
+    
+    private func startAutoCloseTimer() {
+        guard autoCloseSeconds > 0 else { return }
+        dismissTask?.cancel()
+        dismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(autoCloseSeconds * 1_000_000_000))
+            if !Task.isCancelled && !isHovered {
+                onDismiss()
+            }
+        }
     }
 }
 

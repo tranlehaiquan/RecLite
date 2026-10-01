@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Floating status bar / HUD displayed while recording is in progress or counting down
+/// Floating status bar / HUD displayed while recording is in progress
 public struct RecordingHUDView: View {
     @ObservedObject var appState: AppState
     
@@ -13,10 +13,8 @@ public struct RecordingHUDView: View {
     public var body: some View {
         Group {
             switch appState.recordingState {
-            case .countingDown(let seconds):
-                countdownView(seconds: seconds)
-            case .recording(let elapsed, let bytesWritten):
-                recordingBarView(elapsed: elapsed, bytesWritten: bytesWritten)
+            case .recording(let elapsed, _):
+                recordingBarView(elapsed: elapsed)
             case .finalizing:
                 finalizingView
             default:
@@ -25,41 +23,15 @@ public struct RecordingHUDView: View {
         }
     }
     
-    // MARK: - Countdown View
-    
-    private func countdownView(seconds: Int) -> some View {
-        VStack(spacing: 8) {
-            Text("\(seconds)")
-                .font(.system(size: 64, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
-                .shadow(color: .black.opacity(0.6), radius: 8)
-            
-            Button("Cancel") {
-                appState.cancelCountdown()
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(.white.opacity(0.8))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .background(Color.black.opacity(0.4))
-            .clipShape(Capsule())
-        }
-        .frame(width: 140, height: 140)
-        .background(VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow))
-        .clipShape(Circle())
-        .shadow(color: .black.opacity(0.4), radius: 16)
-    }
-    
     // MARK: - Recording Bar View
     
-    private func recordingBarView(elapsed: TimeInterval, bytesWritten: Int64) -> some View {
+    private func recordingBarView(elapsed: TimeInterval) -> some View {
         HStack(spacing: 12) {
             // Blinking Red Dot
             Circle()
                 .fill(Color.red)
-                .frame(width: 11, height: 11)
-                .opacity(isBlinking ? 0.3 : 1.0)
+                .frame(width: 10, height: 10)
+                .opacity(isBlinking ? 0.25 : 1.0)
                 .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: isBlinking)
                 .onAppear { isBlinking = true }
             
@@ -67,83 +39,55 @@ public struct RecordingHUDView: View {
             Text(formattedTime(elapsed))
                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
                 .foregroundColor(.white)
+                .fixedSize()
+                .layoutPriority(2)
             
             Divider()
                 .frame(height: 16)
                 .opacity(0.3)
             
-            // Live File Size Badge
-            HStack(spacing: 4) {
-                Image(systemName: "internaldrive")
-                    .font(.system(size: 10))
-                    .foregroundColor(.cyan)
-                Text(FileSizeEstimator.formatBytes(bytesWritten))
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(.cyan)
+            // Mic mute toggle — single circular icon button
+            Button(action: {
+                appState.toggleMute()
+            }) {
+                Image(systemName: appState.isMuted ? "mic.slash.fill" : "mic.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(appState.isMuted ? .white.opacity(0.4) : .green)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Circle()
+                            .fill(appState.isMuted ? Color.white.opacity(0.08) : Color.green.opacity(0.18))
+                    )
+                    .contentShape(Circle())
             }
-            
-            // Audio Level Meter (if audio is active)
-            if appState.settings.audioMode != .none {
-                HStack(spacing: 2) {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(.green)
-                    
-                    // Audio VU Bar
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule()
-                                .fill(Color.white.opacity(0.15))
-                            Capsule()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [.green, .yellow, .red],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                                .frame(width: max(2, geo.size.width * CGFloat(appState.liveAudioLevel)))
-                                .animation(.easeOut(duration: 0.1), value: appState.liveAudioLevel)
-                        }
-                    }
-                    .frame(width: 36, height: 6)
-                }
-            }
-            
-            Divider()
-                .frame(height: 16)
-                .opacity(0.3)
-            
-            // Format Tag (e.g. MP4 • HEVC)
-            Text("\(appState.settings.container.rawValue.uppercased())")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.6))
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(Color.white.opacity(0.08))
-                .cornerRadius(4)
+            .buttonStyle(.plain)
+            .help(appState.isMuted ? "Unmute microphone" : "Mute microphone")
             
             // Stop Button
             Button(action: {
                 appState.stopRecording()
             }) {
-                HStack(spacing: 5) {
+                HStack(spacing: 6) {
                     Image(systemName: "stop.fill")
                         .font(.system(size: 10, weight: .bold))
                     Text("Stop")
                         .font(.system(size: 12, weight: .bold))
                 }
                 .foregroundColor(.white)
-                .padding(.horizontal, 10)
+                .padding(.horizontal, 11)
                 .padding(.vertical, 5)
                 .background(Color.red)
                 .cornerRadius(6)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .shadow(color: Color.red.opacity(0.4), radius: 4)
+            .fixedSize()
+            .layoutPriority(2)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.vertical, 7)
+        .fixedSize()
         .background(
             ZStack {
                 VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
@@ -161,12 +105,13 @@ public struct RecordingHUDView: View {
         HStack(spacing: 10) {
             ProgressView()
                 .scaleEffect(0.7)
-            Text("Optimizing & saving video...")
+            Text("Saving video...")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.white)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .fixedSize()
         .background(VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .shadow(color: .black.opacity(0.4), radius: 12)

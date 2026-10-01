@@ -315,6 +315,7 @@ struct CaptureModeButton: View {
                     .foregroundColor(isSelected ? .white : .secondary)
             }
             .frame(width: 76, height: 42)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isSelected ? Color.white.opacity(0.16) : Color.clear)

@@ -396,6 +396,19 @@ public struct SettingsView: View {
                 
                 Toggle("Open video in default player", isOn: $settings.openInPlayerAfterRecord)
                 Toggle("Copy video file to clipboard", isOn: $settings.copyToClipboardAfterRecord)
+                
+                HStack {
+                    Text("Auto-close notification:")
+                    Picker("", selection: $settings.autoCloseNotificationSeconds) {
+                        Text("Never").tag(0)
+                        Text("3 seconds").tag(3)
+                        Text("5 seconds (Default)").tag(5)
+                        Text("8 seconds").tag(8)
+                        Text("10 seconds").tag(10)
+                    }
+                    .frame(width: 170)
+                }
+                .padding(.top, 4)
             }
         }
     }

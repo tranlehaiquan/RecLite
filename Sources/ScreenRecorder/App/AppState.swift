@@ -22,6 +22,7 @@ public final class AppState: ObservableObject {
     @Published public var liveAudioLevel: Float = 0.0
     @Published public var liveBytesWritten: Int64 = 0
     @Published public var liveElapsedTime: TimeInterval = 0
+    @Published public var isMuted: Bool = false
     
     @Published public var lastResult: RecordingResult? = nil
     @Published public var isShowingSettings: Bool = false
@@ -224,7 +225,12 @@ public final class AppState: ObservableObject {
                     if !permissions.hasMicrophonePermission {
                         _ = await permissions.requestMicrophonePermission()
                     }
+                    self.isMuted = false
+                    self.audioEngine.isMuted = false
                     try audioEngine.start()
+                } else {
+                    self.isMuted = true
+                    self.audioEngine.isMuted = true
                 }
                 
                 // 5. Update State & Start Timers
@@ -244,7 +250,8 @@ public final class AppState: ObservableObject {
     
     private func startElapsedTimer() {
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        // Use .common mode so the timer keeps firing even while user interacts with the UI
+        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self, let start = self.recordingStartTime else { return }
                 let elapsed = Date().timeIntervalSince(start)
@@ -254,6 +261,14 @@ public final class AppState: ObservableObject {
                 self.recordingState = .recording(elapsed: elapsed, bytesWritten: bytes)
             }
         }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+    
+    /// Toggle microphone mute during recording without stopping capture session
+    public func toggleMute() {
+        isMuted.toggle()
+        audioEngine.isMuted = isMuted
     }
     
     public func stopRecording() {

@@ -23,6 +23,7 @@ public final class AppSettings: ObservableObject {
         static let filenamePrefix = "app_filename_prefix"
         static let copyToClipboardAfterRecord = "app_copy_to_clipboard"
         static let openInPlayerAfterRecord = "app_open_in_player"
+        static let autoCloseNotificationSeconds = "app_auto_close_notification_seconds"
     }
     
     // MARK: - Published Properties
@@ -94,6 +95,10 @@ public final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(openInPlayerAfterRecord, forKey: Keys.openInPlayerAfterRecord) }
     }
     
+    @Published public var autoCloseNotificationSeconds: Int {
+        didSet { UserDefaults.standard.set(autoCloseNotificationSeconds, forKey: Keys.autoCloseNotificationSeconds) }
+    }
+    
     // MARK: - Initializer
     
     private init() {
@@ -127,6 +132,7 @@ public final class AppSettings: ObservableObject {
         self.filenamePrefix = defaults.string(forKey: Keys.filenamePrefix) ?? "Screen Recording"
         self.copyToClipboardAfterRecord = defaults.bool(forKey: Keys.copyToClipboardAfterRecord)
         self.openInPlayerAfterRecord = defaults.object(forKey: Keys.openInPlayerAfterRecord) == nil ? true : defaults.bool(forKey: Keys.openInPlayerAfterRecord)
+        self.autoCloseNotificationSeconds = defaults.object(forKey: Keys.autoCloseNotificationSeconds) == nil ? 5 : defaults.integer(forKey: Keys.autoCloseNotificationSeconds)
     }
     
     // MARK: - Computed Properties

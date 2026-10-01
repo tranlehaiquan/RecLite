@@ -12,6 +12,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     // Windows / Panels
     private var floatingBarPanel: NSPanel?
     private var areaSelectionPanel: NSPanel?
+    private var countdownPanel: NSPanel?
     private var recordingHUDPanel: NSPanel?
     private var completionPanel: NSPanel?
     private var settingsWindow: NSWindow?
@@ -26,6 +27,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         
         setupStatusBar()
         setupFloatingBarPanel()
+        setupCountdownPanel()
         setupRecordingHUDPanel()
         setupAreaSelectionPanel()
         setupCompletionPanel()
@@ -151,11 +153,47 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         areaSelectionPanel?.orderOut(nil)
     }
     
+    // MARK: - Countdown Panel (Centered 3-2-1 indicator)
+    
+    private func setupCountdownPanel() {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 140, height: 140),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .floating
+        panel.isFloatingPanel = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        
+        let hostingView = NSHostingView(rootView: CountdownHUDView(appState: appState))
+        panel.contentView = hostingView
+        
+        self.countdownPanel = panel
+    }
+    
+    private func showCountdown() {
+        guard let panel = countdownPanel, let screen = NSScreen.main else { return }
+        panel.setContentSize(NSSize(width: 140, height: 140))
+        let screenRect = screen.visibleFrame
+        let x = screenRect.midX - 70
+        let y = screenRect.midY - 70
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        panel.orderFront(nil)
+    }
+    
+    private func hideCountdown() {
+        countdownPanel?.orderOut(nil)
+    }
+    
     // MARK: - Recording HUD Panel (Live indicator during recording)
     
     private func setupRecordingHUDPanel() {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 280, height: 48),
+            contentRect: NSRect(x: 0, y: 0, width: 260, height: 50),
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
             backing: .buffered,
             defer: false
@@ -176,9 +214,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func showRecordingHUD() {
         guard let panel = recordingHUDPanel, let screen = NSScreen.main else { return }
+        panel.setContentSize(NSSize(width: 260, height: 50))
         let screenRect = screen.visibleFrame
-        let x = screenRect.maxX - panel.frame.width - 24
-        let y = screenRect.maxY - panel.frame.height - 24
+        let x = screenRect.maxX - 260 - 24
+        let y = screenRect.maxY - 50 - 24
         panel.setFrameOrigin(NSPoint(x: x, y: y))
         panel.orderFront(nil)
     }
@@ -209,20 +248,40 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showCompletionCard(result: RecordingResult) {
         guard let panel = completionPanel, let screen = NSScreen.main else { return }
         
-        let view = CompletionCardView(result: result) { [weak self] in
+        let autoCloseSeconds = Double(appState.settings.autoCloseNotificationSeconds)
+        let view = CompletionCardView(result: result, autoCloseSeconds: autoCloseSeconds) { [weak self] in
             self?.appState.dismissResultSheet()
         }
-        panel.contentView = NSHostingView(rootView: view)
+        let hostingView = NSHostingView(rootView: view)
+        panel.contentView = hostingView
+        
+        let fittingSize = hostingView.fittingSize
+        let width: CGFloat = 360
+        let height: CGFloat = fittingSize.height > 50 ? fittingSize.height : 185
+        panel.setContentSize(NSSize(width: width, height: height))
         
         let screenRect = screen.visibleFrame
-        let x = screenRect.maxX - 360 - 24
+        let x = screenRect.maxX - width - 24
         let y = screenRect.minY + 24
         panel.setFrameOrigin(NSPoint(x: x, y: y))
+        
+        panel.alphaValue = 0.0
         panel.orderFront(nil)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            panel.animator().alphaValue = 1.0
+        }
     }
     
     private func hideCompletionCard() {
-        completionPanel?.orderOut(nil)
+        guard let panel = completionPanel, panel.isVisible else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            panel.animator().alphaValue = 0.0
+        } completionHandler: {
+            panel.orderOut(nil)
+            panel.alphaValue = 1.0
+        }
     }
     
     // MARK: - Settings Window
@@ -263,19 +322,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 
                 switch state {
                 case .idle:
+                    self.hideCountdown()
                     self.hideRecordingHUD()
                     self.showFloatingBar()
                 case .countingDown:
                     self.hideFloatingBar()
-                    self.showRecordingHUD()
+                    self.hideRecordingHUD()
+                    self.showCountdown()
                 case .recording:
                     self.hideFloatingBar()
+                    self.hideCountdown()
                     self.showRecordingHUD()
                 case .paused:
                     break
                 case .finalizing:
                     self.updateStatusItem()
                 case .failed(let msg):
+                    self.hideCountdown()
                     self.hideRecordingHUD()
                     self.showFloatingBar()
                     self.showErrorAlert(msg)
