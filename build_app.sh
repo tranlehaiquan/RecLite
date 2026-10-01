@@ -22,6 +22,11 @@ mkdir -p "$RESOURCES"
 cp "$DIR/.build/release/ScreenRecorder" "$MACOS/ScreenRecorder"
 chmod +x "$MACOS/ScreenRecorder"
 
+# Copy resources (AppIcon)
+if [ -f "$DIR/Resources/AppIcon.icns" ]; then
+    cp "$DIR/Resources/AppIcon.icns" "$RESOURCES/AppIcon.icns"
+fi
+
 # Create Info.plist
 cat << 'EOF' > "$CONTENTS/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
