@@ -140,6 +140,20 @@ struct VideoFormatTests {
         #expect(appState.isShowingWindowSelection == false)
     }
     
+    @Test("AppState HUD collapse state toggling")
+    @MainActor
+    func testAppStateHUDCollapse() {
+        let appState = AppState.shared
+        appState.isHUDCollapsed = false
+        #expect(appState.isHUDCollapsed == false)
+        
+        appState.toggleHUDCollapsed()
+        #expect(appState.isHUDCollapsed == true)
+        
+        appState.toggleHUDCollapsed()
+        #expect(appState.isHUDCollapsed == false)
+    }
+    
     @Test("AudioMixer buffering and flushing")
     func testAudioMixerBufferingAndFlushing() {
         let mixer = AudioMixer()

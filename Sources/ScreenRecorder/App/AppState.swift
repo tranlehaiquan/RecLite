@@ -30,6 +30,7 @@ public final class AppState: ObservableObject {
     @Published public var liveBytesWritten: Int64 = 0
     @Published public var isShowingAreaSelection: Bool = false
     @Published public var isShowingWindowSelection: Bool = false
+    @Published public var isHUDCollapsed: Bool = false
     
     // MARK: - Internal Engines
     
@@ -134,6 +135,10 @@ public final class AppState: ObservableObject {
         self.isShowingResultSheet = false
     }
     
+    public func toggleHUDCollapsed() {
+        isHUDCollapsed.toggle()
+    }
+    
     public func startRecording() {
         guard recordingState == .idle else { return }
         
@@ -146,6 +151,7 @@ public final class AppState: ObservableObject {
         // Hide selection overlays before starting
         isShowingAreaSelection = false
         isShowingWindowSelection = false
+        isHUDCollapsed = false
         
         let countdown = settings.countdownSeconds
         if countdown > 0 {
@@ -363,6 +369,7 @@ public final class AppState: ObservableObject {
         recordingState = .finalizing
         timer?.invalidate()
         timer = nil
+        isHUDCollapsed = false
         
         if settings.audioMode == .both {
             audioMixer.flush()
@@ -407,6 +414,7 @@ public final class AppState: ObservableObject {
         countdownTimer?.invalidate()
         countdownTimer = nil
         audioEngine.stop()
+        isHUDCollapsed = false
         recordingState = .failed(message)
     }
     

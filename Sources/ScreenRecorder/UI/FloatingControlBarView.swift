@@ -14,10 +14,26 @@ public struct FloatingControlBarView: View {
     }
     
     public var body: some View {
-        HStack(spacing: 14) {
-            // Close Button
+        HStack(spacing: 12) {
+            // Drag Grip Handle
+            HStack(spacing: 2) {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white.opacity(0.65))
+            }
+            .frame(width: 22, height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.white.opacity(0.12))
+            )
+            .overlay(
+                WindowDragHandle()
+            )
+            .help("Drag to move Control Bar anywhere")
+            
+            // Close Button - hides the floating bar without killing the app process
             Button(action: {
-                NSApplication.shared.terminate(nil)
+                (NSApp.delegate as? AppDelegate)?.hideFloatingBar()
             }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .bold))
@@ -27,7 +43,12 @@ public struct FloatingControlBarView: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("Quit Application")
+            .help("Hide Control Bar (Reopen from Menu Bar)")
+            .contextMenu {
+                Button("Quit RecLite", role: .destructive) {
+                    NSApplication.shared.terminate(nil)
+                }
+            }
             
             Divider()
                 .frame(height: 24)
@@ -269,48 +290,42 @@ public struct FloatingControlBarView: View {
             .padding(.horizontal, 6)
             
             // Section 4: Primary Record Button
-            Button(action: {
+            PrimaryRecordButton {
                 appState.toggleRecording()
-            }) {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: 10, height: 10)
-                        .shadow(color: .red.opacity(0.8), radius: 3)
-                    
-                    Text("Record")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 7)
-                .background(
-                    LinearGradient(
-                        colors: [Color.red.opacity(0.92), Color.red],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .clipShape(Capsule())
-                .shadow(color: Color.red.opacity(0.4), radius: 4, x: 0, y: 2)
             }
-            .buttonStyle(.plain)
             .fixedSize()
             .layoutPriority(2)
-            .help("Start Recording (Return)")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(
             ZStack {
                 VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
+                WindowDragHandle()
                 RoundedRectangle(cornerRadius: 14)
                     .stroke(Color.white.opacity(0.18), lineWidth: 1)
             }
         )
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .shadow(color: Color.black.opacity(0.4), radius: 16, x: 0, y: 6)
+        .contextMenu {
+            Button("Hide Control Bar") {
+                (NSApp.delegate as? AppDelegate)?.hideFloatingBar()
+            }
+            Button("Open Recordings Folder") {
+                if let url = (NSApp.delegate as? AppDelegate)?.appState.settings.saveDirectoryURL {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            Divider()
+            Button("Preferences…") {
+                (NSApp.delegate as? AppDelegate)?.openSettingsWindow()
+            }
+            Divider()
+            Button("Quit RecLite", role: .destructive) {
+                NSApplication.shared.terminate(nil)
+            }
+        }
     }
     
     private var audioIconName: String {
@@ -330,6 +345,43 @@ public struct FloatingControlBarView: View {
             preset: settings.preset
         )
         return String(format: "~%.0f MB/min", mbMin)
+    }
+}
+
+// MARK: - PrimaryRecordButton
+
+struct PrimaryRecordButton: View {
+    let action: () -> Void
+    @State private var isHovering: Bool = false
+    
+    var body: some View {
+        Button(action: action) {
+            Text("Record")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 7)
+                .background(
+                    LinearGradient(
+                        colors: isHovering
+                            ? [Color(red: 1.0, green: 0.3, blue: 0.3), Color(red: 0.9, green: 0.15, blue: 0.15)]
+                            : [Color(red: 0.92, green: 0.22, blue: 0.22), Color(red: 0.82, green: 0.12, blue: 0.12)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                )
+                .shadow(color: Color.red.opacity(isHovering ? 0.45 : 0.25), radius: isHovering ? 5 : 3, x: 0, y: 1.5)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovering = hovering
+        }
+        .help("Start Recording (Return)")
     }
 }
 

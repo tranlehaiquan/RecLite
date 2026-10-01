@@ -10,9 +10,71 @@ final class KeyablePanel: NSPanel {
 }
 
 /// NSHostingView subclass that accepts mouse clicks immediately even when the panel is inactive or not the key window
-final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         return true
+    }
+}
+
+/// Hosting view for the floating control bar with native right-click context menu
+final class FloatingBarHostingView: FirstMouseHostingView<FloatingControlBarView> {
+    weak var appDelegate: AppDelegate?
+    override func menu(for event: NSEvent) -> NSMenu? {
+        return appDelegate?.buildFloatingBarContextMenu()
+    }
+}
+
+/// Hosting view for the recording HUD with native right-click context menu
+final class RecordingHUDHostingView: FirstMouseHostingView<RecordingHUDView> {
+    weak var appDelegate: AppDelegate?
+    override func menu(for event: NSEvent) -> NSMenu? {
+        return appDelegate?.buildHUDContextMenu()
+    }
+}
+
+/// Transparent overlay on NSStatusBarButton that captures left-click and secondary/right-click with 100% reliability
+final class StatusItemOverlayView: NSView {
+    weak var appDelegate: AppDelegate?
+    
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        return self
+    }
+    
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) {
+            appDelegate?.showStatusContextMenu()
+        } else {
+            (superview as? NSStatusBarButton)?.isHighlighted = true
+            super.mouseDown(with: event)
+        }
+    }
+    
+    override func mouseUp(with event: NSEvent) {
+        (superview as? NSStatusBarButton)?.isHighlighted = false
+        let pointInView = convert(event.locationInWindow, from: nil)
+        if bounds.contains(pointInView) {
+            if event.modifierFlags.contains(.control) {
+                appDelegate?.showStatusContextMenu()
+            } else {
+                appDelegate?.handleStatusBarLeftClick()
+            }
+        }
+    }
+    
+    override func rightMouseDown(with event: NSEvent) {
+        (superview as? NSStatusBarButton)?.isHighlighted = true
+    }
+    
+    override func rightMouseUp(with event: NSEvent) {
+        (superview as? NSStatusBarButton)?.isHighlighted = false
+        let pointInView = convert(event.locationInWindow, from: nil)
+        if bounds.contains(pointInView) {
+            appDelegate?.showStatusContextMenu()
+        }
+    }
+    
+    override func menu(for event: NSEvent) -> NSMenu? {
+        return appDelegate?.buildStatusMenu()
     }
 }
 
@@ -62,18 +124,196 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         guard let button = statusItem?.button else { return }
         
-        button.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "ScreenRecorder")
+        button.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "RecLite")
         button.action = #selector(statusBarButtonClicked)
         button.target = self
-        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        
+        // Add transparent overlay to guarantee 100% reliable left/right/control click handling
+        let overlay = StatusItemOverlayView(frame: button.bounds)
+        overlay.autoresizingMask = [.width, .height]
+        overlay.appDelegate = self
+        button.addSubview(overlay)
     }
     
-    @objc private func statusBarButtonClicked() {
+    @objc public func handleStatusBarLeftClick() {
         if appState.recordingState.isRecordingOrPaused {
             appState.stopRecording()
         } else {
+            toggleFloatingBar()
+        }
+    }
+    
+    @objc private func statusBarButtonClicked() {
+        handleStatusBarLeftClick()
+    }
+    
+    @objc public func toggleFloatingBar() {
+        guard let panel = floatingBarPanel else { return }
+        if panel.isVisible {
+            hideFloatingBar()
+        } else {
             showFloatingBar()
         }
+    }
+    
+    @objc public func showStatusContextMenu() {
+        guard let button = statusItem?.button else { return }
+        let menu = buildStatusMenu()
+        button.isHighlighted = true
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
+        button.isHighlighted = false
+    }
+    
+    public func buildStatusMenu() -> NSMenu {
+        let menu = NSMenu(title: "RecLite")
+        
+        if appState.recordingState.isRecordingOrPaused {
+            let stopItem = NSMenuItem(title: "Stop Recording", action: #selector(stopRecordingAction), keyEquivalent: "s")
+            stopItem.keyEquivalentModifierMask = [.control, .command]
+            stopItem.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: nil)
+            stopItem.target = self
+            menu.addItem(stopItem)
+            menu.addItem(NSMenuItem.separator())
+        }
+        
+        let barVisible = floatingBarPanel?.isVisible == true
+        let toggleBarTitle = barVisible ? "Hide Control Bar" : "Show Control Bar"
+        let toggleBarItem = NSMenuItem(title: toggleBarTitle, action: #selector(toggleFloatingBar), keyEquivalent: "5")
+        toggleBarItem.keyEquivalentModifierMask = [.command, .shift]
+        toggleBarItem.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: nil)
+        toggleBarItem.target = self
+        menu.addItem(toggleBarItem)
+        
+        let folderItem = NSMenuItem(title: "Open Recordings Folder", action: #selector(openRecordingsFolder), keyEquivalent: "o")
+        folderItem.keyEquivalentModifierMask = [.command, .shift]
+        folderItem.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
+        folderItem.target = self
+        menu.addItem(folderItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        let prefsItem = NSMenuItem(title: "Preferences…", action: #selector(openPreferences), keyEquivalent: ",")
+        prefsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+        prefsItem.target = self
+        menu.addItem(prefsItem)
+        
+        let aboutItem = NSMenuItem(title: "About RecLite", action: #selector(openAboutPanel), keyEquivalent: "")
+        aboutItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: nil)
+        aboutItem.target = self
+        menu.addItem(aboutItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        let quitItem = NSMenuItem(title: "Quit RecLite", action: #selector(quitApp), keyEquivalent: "q")
+        quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
+        quitItem.target = self
+        menu.addItem(quitItem)
+        
+        return menu
+    }
+    
+    public func buildFloatingBarContextMenu() -> NSMenu {
+        let menu = NSMenu(title: "Floating Bar Context")
+        
+        let hideBarItem = NSMenuItem(title: "Hide Control Bar", action: #selector(hideFloatingBar), keyEquivalent: "")
+        hideBarItem.image = NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: nil)
+        hideBarItem.target = self
+        menu.addItem(hideBarItem)
+        
+        let folderItem = NSMenuItem(title: "Open Recordings Folder", action: #selector(openRecordingsFolder), keyEquivalent: "")
+        folderItem.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
+        folderItem.target = self
+        menu.addItem(folderItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        let prefsItem = NSMenuItem(title: "Preferences…", action: #selector(openPreferences), keyEquivalent: "")
+        prefsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+        prefsItem.target = self
+        menu.addItem(prefsItem)
+        
+        let aboutItem = NSMenuItem(title: "About RecLite", action: #selector(openAboutPanel), keyEquivalent: "")
+        aboutItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: nil)
+        aboutItem.target = self
+        menu.addItem(aboutItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        let quitItem = NSMenuItem(title: "Quit RecLite", action: #selector(quitApp), keyEquivalent: "")
+        quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
+        quitItem.target = self
+        menu.addItem(quitItem)
+        
+        return menu
+    }
+    
+    public func buildHUDContextMenu() -> NSMenu {
+        let menu = NSMenu(title: "Recording HUD")
+        
+        let isCollapsed = appState.isHUDCollapsed
+        let toggleCollapseItem = NSMenuItem(
+            title: isCollapsed ? "Expand HUD" : "Collapse HUD",
+            action: #selector(toggleHUDCollapsedAction),
+            keyEquivalent: ""
+        )
+        toggleCollapseItem.image = NSImage(systemSymbolName: isCollapsed ? "chevron.left" : "chevron.right", accessibilityDescription: nil)
+        toggleCollapseItem.target = self
+        menu.addItem(toggleCollapseItem)
+        
+        let hideHUDItem = NSMenuItem(title: "Hide Floating HUD", action: #selector(hideHUDAction), keyEquivalent: "")
+        hideHUDItem.image = NSImage(systemSymbolName: "eye.slash", accessibilityDescription: nil)
+        hideHUDItem.target = self
+        menu.addItem(hideHUDItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        let stopItem = NSMenuItem(title: "Stop Recording", action: #selector(stopRecordingAction), keyEquivalent: "")
+        stopItem.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: nil)
+        stopItem.target = self
+        menu.addItem(stopItem)
+        
+        let folderItem = NSMenuItem(title: "Open Recordings Folder", action: #selector(openRecordingsFolder), keyEquivalent: "")
+        folderItem.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
+        folderItem.target = self
+        menu.addItem(folderItem)
+        
+        return menu
+    }
+    
+    @objc private func stopRecordingAction() {
+        appState.stopRecording()
+    }
+    
+    @objc private func toggleHUDCollapsedAction() {
+        appState.toggleHUDCollapsed()
+    }
+    
+    @objc private func hideHUDAction() {
+        hideRecordingHUD()
+    }
+    
+    @objc private func openRecordingsFolder() {
+        let saveURL = appState.settings.saveDirectoryURL
+        NSWorkspace.shared.open(saveURL)
+    }
+    
+    @objc private func openPreferences() {
+        openSettingsWindow()
+    }
+    
+    @objc private func openAboutPanel() {
+        NSApp.activate(ignoringOtherApps: true)
+        let options: [NSApplication.AboutPanelOptionKey: Any] = [
+            .applicationName: "RecLite",
+            .version: "1.0.0",
+            .applicationVersion: "1.0.0",
+            .credits: NSAttributedString(string: "Native high-performance screen recording for macOS with compact MP4 & HEVC encoding.")
+        ]
+        NSApp.orderFrontStandardAboutPanel(options)
+    }
+    
+    @objc private func quitApp() {
+        NSApplication.shared.terminate(nil)
     }
     
     private func updateStatusItem() {
@@ -125,28 +365,40 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.hasShadow = false
         panel.isMovableByWindowBackground = true
         
-        // Use FirstMouseHostingView so clicks on inactive floating bar register immediately
-        let hostingView = FirstMouseHostingView(rootView: FloatingControlBarView(appState: appState))
+        // Use FloatingBarHostingView so clicks register immediately and right-clicks pop up context menu
+        let hostingView = FloatingBarHostingView(rootView: FloatingControlBarView(appState: appState))
+        hostingView.appDelegate = self
         panel.contentView = hostingView
         
         self.floatingBarPanel = panel
     }
     
-    public func showFloatingBar() {
-        guard let panel = floatingBarPanel, let screen = targetScreen ?? NSScreen.main else { return }
+    private var hasPositionedFloatingBar = false
+    
+    @objc public func showFloatingBar() {
+        guard let panel = floatingBarPanel else { return }
         
-        panel.setContentSize(NSSize(width: 750, height: 60))
+        // If already visible, do not reposition it (preserves user drag position)
+        if panel.isVisible {
+            panel.orderFrontRegardless()
+            return
+        }
         
-        // Position at bottom center, just above the Dock
-        let screenRect = screen.visibleFrame
-        let x = screenRect.midX - (panel.frame.width / 2)
-        let y = screenRect.minY + 40
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        // Only set default bottom-center origin once; retain dragged position across hide/show
+        if !hasPositionedFloatingBar {
+            guard let screen = targetScreen ?? NSScreen.main else { return }
+            panel.setContentSize(NSSize(width: 750, height: 60))
+            let screenRect = screen.visibleFrame
+            let x = screenRect.midX - (panel.frame.width / 2)
+            let y = screenRect.minY + 40
+            panel.setFrameOrigin(NSPoint(x: x, y: y))
+            hasPositionedFloatingBar = true
+        }
         
         panel.orderFrontRegardless()
     }
     
-    public func hideFloatingBar() {
+    @objc public func hideFloatingBar() {
         floatingBarPanel?.orderOut(nil)
     }
     
@@ -332,7 +584,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func setupRecordingHUDPanel() {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 260, height: 50),
+            contentRect: NSRect(x: 0, y: 0, width: 285, height: 44),
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
             backing: .buffered,
             defer: false
@@ -346,24 +598,61 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.hasShadow = false
         panel.isMovableByWindowBackground = true
         
-        let hostingView = NSHostingView(rootView: RecordingHUDView(appState: appState))
+        let hostingView = RecordingHUDHostingView(rootView: RecordingHUDView(appState: appState))
+        hostingView.appDelegate = self
         panel.contentView = hostingView
         
         self.recordingHUDPanel = panel
     }
     
     private func showRecordingHUD() {
-        guard let panel = recordingHUDPanel, let screen = targetScreen ?? NSScreen.main else { return }
-        panel.setContentSize(NSSize(width: 260, height: 50))
+        guard let panel = recordingHUDPanel else { return }
+        
+        // If already visible, DO NOT reset origin (prevents snapping back while user drags!)
+        if panel.isVisible {
+            panel.orderFrontRegardless()
+            return
+        }
+        
+        guard let screen = targetScreen ?? NSScreen.main else { return }
+        let initialWidth: CGFloat = 285
+        let initialHeight: CGFloat = 44
+        panel.setContentSize(NSSize(width: initialWidth, height: initialHeight))
         let screenRect = screen.visibleFrame
-        let x = screenRect.maxX - 260 - 24
-        let y = screenRect.maxY - 50 - 24
+        let x = screenRect.maxX - initialWidth - 24
+        let y = screenRect.maxY - initialHeight - 24
         panel.setFrameOrigin(NSPoint(x: x, y: y))
         panel.orderFrontRegardless()
     }
     
-    private func hideRecordingHUD() {
+    public func hideRecordingHUD() {
         recordingHUDPanel?.orderOut(nil)
+    }
+    
+    public func updateHUDSize(isCollapsed: Bool) {
+        guard let panel = recordingHUDPanel, panel.isVisible else { return }
+        guard let screen = panel.screen ?? targetScreen ?? NSScreen.main else { return }
+        
+        let targetSize = isCollapsed ? NSSize(width: 112, height: 36) : NSSize(width: 285, height: 44)
+        let currentFrame = panel.frame
+        
+        let widthDiff = currentFrame.width - targetSize.width
+        let heightDiff = currentFrame.height - targetSize.height
+        
+        // Pin top edge: origin.y is bottom in Cocoa, so new origin.y = currentFrame.origin.y + heightDiff
+        let newY = currentFrame.origin.y + heightDiff
+        
+        // Pin to whichever side user placed it closer to
+        let isNearRight = currentFrame.midX > screen.frame.midX
+        let newX = isNearRight ? (currentFrame.origin.x + widthDiff) : currentFrame.origin.x
+        
+        let newFrame = NSRect(origin: NSPoint(x: newX, y: newY), size: targetSize)
+        
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.22
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            panel.animator().setFrame(newFrame, display: true)
+        }
     }
     
     // MARK: - Completion Panel (Result card)
@@ -452,6 +741,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
     
+    private var lastRecordedCaseName: String?
+    
     // MARK: - State Observation
     
     private func observeStateChanges() {
@@ -460,6 +751,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] state in
                 guard let self = self else { return }
                 self.updateStatusItem()
+                
+                let currentCase: String
+                switch state {
+                case .idle: currentCase = "idle"
+                case .countingDown: currentCase = "countingDown"
+                case .recording: currentCase = "recording"
+                case .paused: currentCase = "paused"
+                case .finalizing: currentCase = "finalizing"
+                case .failed: currentCase = "failed"
+                }
+                
+                // Prevent duplicate case transitions (e.g. 0.5s recording timer ticks)
+                // from resetting window panels or snapping dragged positions back!
+                guard currentCase != self.lastRecordedCaseName else { return }
+                self.lastRecordedCaseName = currentCase
                 
                 switch state {
                 case .idle:
@@ -539,6 +845,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                         self?.appState.isShowingSettings = false
                     }
                 }
+            }
+            .store(in: &cancellables)
+            
+        appState.$isHUDCollapsed
+            .receive(on: RunLoop.main)
+            .sink { [weak self] isCollapsed in
+                self?.updateHUDSize(isCollapsed: isCollapsed)
             }
             .store(in: &cancellables)
     }

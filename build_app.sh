@@ -43,6 +43,8 @@ cat << 'EOF' > "$CONTENTS/Info.plist"
     <string>6.0</string>
     <key>CFBundleName</key>
     <string>ScreenRecorder</string>
+    <key>CFBundleDisplayName</key>
+    <string>RecLite</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -53,6 +55,10 @@ cat << 'EOF' > "$CONTENTS/Info.plist"
     <string>14.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.video</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 RecLite. All rights reserved.</string>
     <key>NSScreenCaptureUsageDescription</key>
     <string>ScreenRecorder needs screen recording access to capture displays, windows, and custom crop areas.</string>
     <key>NSMicrophoneUsageDescription</key>
