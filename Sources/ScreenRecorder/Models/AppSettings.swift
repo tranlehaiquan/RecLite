@@ -24,6 +24,7 @@ public final class AppSettings: ObservableObject {
         static let copyToClipboardAfterRecord = "app_copy_to_clipboard"
         static let openInPlayerAfterRecord = "app_open_in_player"
         static let autoCloseNotificationSeconds = "app_auto_close_notification_seconds"
+        static let suppressInstallPrompt = "app_suppress_install_prompt"
     }
     
     // MARK: - Published Properties
@@ -98,6 +99,10 @@ public final class AppSettings: ObservableObject {
     @Published public var autoCloseNotificationSeconds: Int {
         didSet { UserDefaults.standard.set(autoCloseNotificationSeconds, forKey: Keys.autoCloseNotificationSeconds) }
     }
+
+    @Published public var suppressInstallPrompt: Bool {
+        didSet { UserDefaults.standard.set(suppressInstallPrompt, forKey: Keys.suppressInstallPrompt) }
+    }
     
     // MARK: - Initializer
     
@@ -133,6 +138,7 @@ public final class AppSettings: ObservableObject {
         self.copyToClipboardAfterRecord = defaults.bool(forKey: Keys.copyToClipboardAfterRecord)
         self.openInPlayerAfterRecord = defaults.object(forKey: Keys.openInPlayerAfterRecord) == nil ? true : defaults.bool(forKey: Keys.openInPlayerAfterRecord)
         self.autoCloseNotificationSeconds = defaults.object(forKey: Keys.autoCloseNotificationSeconds) == nil ? 5 : defaults.integer(forKey: Keys.autoCloseNotificationSeconds)
+        self.suppressInstallPrompt = defaults.bool(forKey: Keys.suppressInstallPrompt)
     }
     
     // MARK: - Computed Properties

@@ -93,6 +93,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var areaRecordingFramePanel: NSPanel?
     private var completionPanel: NSPanel?
     private var settingsWindow: NSWindow?
+    private var installWindow: NSWindow?
     
     // Menu Bar Status Item
     private var statusItem: NSStatusItem?
@@ -116,6 +117,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Initial presentation
         showFloatingBar()
+        
+        // Prompt user to drag & drop / move app to /Applications if running outside /Applications
+        if AppInstaller.shared.shouldPromptForInstallation() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                self?.showInstallPromptWindow()
+            }
+        }
     }
     
     // MARK: - Menu Bar Setup
@@ -190,6 +198,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         folderItem.target = self
         menu.addItem(folderItem)
         
+        if !AppInstaller.shared.isInstalledInApplicationsFolder {
+            menu.addItem(NSMenuItem.separator())
+            let installItem = NSMenuItem(title: "Move to Applications Folder…", action: #selector(showInstallPromptWindow), keyEquivalent: "")
+            installItem.image = NSImage(systemSymbolName: "arrow.down.app", accessibilityDescription: nil)
+            installItem.target = self
+            menu.addItem(installItem)
+        }
+        
         menu.addItem(NSMenuItem.separator())
         
         let prefsItem = NSMenuItem(title: "Preferences…", action: #selector(openPreferences), keyEquivalent: ",")
@@ -224,6 +240,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         folderItem.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
         folderItem.target = self
         menu.addItem(folderItem)
+        
+        if !AppInstaller.shared.isInstalledInApplicationsFolder {
+            menu.addItem(NSMenuItem.separator())
+            let installItem = NSMenuItem(title: "Move to Applications Folder…", action: #selector(showInstallPromptWindow), keyEquivalent: "")
+            installItem.image = NSImage(systemSymbolName: "arrow.down.app", accessibilityDescription: nil)
+            installItem.target = self
+            menu.addItem(installItem)
+        }
         
         menu.addItem(NSMenuItem.separator())
         
@@ -314,6 +338,40 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     
     @objc private func quitApp() {
         NSApplication.shared.terminate(nil)
+    }
+    
+    // MARK: - Install Prompt Window
+    
+    @objc public func showInstallPromptWindow() {
+        if let win = installWindow {
+            win.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        
+        let win = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 330),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        win.title = "Install RecLite"
+        win.titlebarAppearsTransparent = true
+        win.titleVisibility = .hidden
+        win.isMovableByWindowBackground = true
+        win.center()
+        win.level = .floating
+        win.isReleasedWhenClosed = false
+        
+        let view = InstallPromptView { [weak win] in
+            win?.close()
+        }
+        let hostingView = NSHostingView(rootView: view)
+        win.contentView = hostingView
+        
+        self.installWindow = win
+        NSApp.activate(ignoringOtherApps: true)
+        win.makeKeyAndOrderFront(nil)
     }
     
     private func updateStatusItem() {

@@ -153,6 +153,14 @@ struct VideoFormatTests {
         appState.toggleHUDCollapsed()
         #expect(appState.isHUDCollapsed == false)
     }
+
+    @Test("AppInstaller installation detection and application URLs")
+    @MainActor
+    func testAppInstallerPaths() {
+        let installer = AppInstaller.shared
+        #expect(installer.applicationsDirectoryURL.path == "/Applications")
+        #expect(installer.destinationBundleURL.path.contains("/Applications/"))
+    }
     
     @Test("AudioMixer buffering and flushing")
     func testAudioMixerBufferingAndFlushing() {

@@ -82,3 +82,4 @@ fi
 
 echo "==> macOS App Bundle created successfully at: $APP_DIR"
 echo "You can launch it by running: open $APP_DIR"
+echo "To package into a drag-and-drop installer DMG, run: ./create_dmg.sh"
