@@ -4,6 +4,8 @@ A native, ultra-high-performance macOS screen recording application built with *
 
 Designed to replicate the seamless user experience of macOS's built-in screen recording (`Command + Shift + 5`) while solving its biggest limitation: **giant, heavyweight uncompressed `.mov` files**.
 
+> 📋 See [ROADMAP.md](./ROADMAP.md) for known issues, missing features, and what's planned next.
+
 ---
 
 ## 🚀 Why RecLite?
