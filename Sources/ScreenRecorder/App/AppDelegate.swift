@@ -317,10 +317,30 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func showErrorAlert(_ message: String) {
         let alert = NSAlert()
-        alert.messageText = "Recording Error"
-        alert.informativeText = message
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        
+        let isPermissionRelated = message.contains("-3801")
+            || message.lowercased().contains("declined")
+            || message.lowercased().contains("tcc")
+            || message.lowercased().contains("permission")
+            || !PermissionsManager.shared.hasScreenRecordingPermission
+        
+        if isPermissionRelated {
+            alert.messageText = "Screen Recording Permission Required"
+            alert.informativeText = "ScreenRecorder needs permission to record your screen and audio.\n\nPlease enable ScreenRecorder in:\nSystem Settings > Privacy & Security > Screen & System Audio Recording."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Open System Settings")
+            alert.addButton(withTitle: "Cancel")
+            
+            let res = alert.runModal()
+            if res == .alertFirstButtonReturn {
+                PermissionsManager.shared.openScreenRecordingSystemSettings()
+            }
+        } else {
+            alert.messageText = "Recording Error"
+            alert.informativeText = message
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
     }
 }

@@ -26,6 +26,7 @@ public final class VideoWriterEngine: @unchecked Sendable {
     private var isSessionStarted = false
     private var sessionStartTime: CMTime = .invalid
     private var lastVideoTime: CMTime = .invalid
+    private var lastAudioTime: CMTime = .invalid
     
     public private(set) var bytesWritten: Int64 = 0
     public private(set) var isWriting: Bool = false
@@ -140,24 +141,11 @@ public final class VideoWriterEngine: @unchecked Sendable {
     // MARK: - Frame Append
     
     public func appendVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
-        writerQueue.async { [weak self] in
-            guard let self = self, self.isWriting, let writer = self.assetWriter, let vInput = self.videoInput else { return }
-            
-            let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-            guard pts.isValid else { return }
-            
-            if !self.isSessionStarted {
-                writer.startSession(atSourceTime: pts)
-                self.sessionStartTime = pts
-                self.isSessionStarted = true
-            }
-            
-            guard vInput.isReadyForMoreMediaData else { return }
-            
-            vInput.append(sampleBuffer)
-            self.lastVideoTime = pts
-            self.updateBytesWritten()
-        }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        guard pts.isValid else { return }
+        
+        appendVideoPixelBuffer(pixelBuffer, presentationTime: pts)
     }
     
     public func appendVideoPixelBuffer(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
@@ -172,11 +160,17 @@ public final class VideoWriterEngine: @unchecked Sendable {
                 self.isSessionStarted = true
             }
             
+            // AVAssetWriter requires strictly increasing timestamps
+            if self.lastVideoTime.isValid && presentationTime <= self.lastVideoTime {
+                return
+            }
+            
             guard adaptor.assetWriterInput.isReadyForMoreMediaData else { return }
             
-            adaptor.append(pixelBuffer, withPresentationTime: presentationTime)
-            self.lastVideoTime = presentationTime
-            self.updateBytesWritten()
+            if adaptor.append(pixelBuffer, withPresentationTime: presentationTime) {
+                self.lastVideoTime = presentationTime
+                self.updateBytesWritten()
+            }
         }
     }
     
@@ -190,8 +184,15 @@ public final class VideoWriterEngine: @unchecked Sendable {
             let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             guard pts.isValid, pts >= self.sessionStartTime else { return }
             
+            // AVAssetWriter requires strictly increasing timestamps
+            if self.lastAudioTime.isValid && pts <= self.lastAudioTime {
+                return
+            }
+            
             if aInput.isReadyForMoreMediaData {
-                aInput.append(sampleBuffer)
+                if aInput.append(sampleBuffer) {
+                    self.lastAudioTime = pts
+                }
             }
         }
     }
@@ -216,6 +217,16 @@ public final class VideoWriterEngine: @unchecked Sendable {
                 self.isWriting = false
                 guard let writer = self.assetWriter else {
                     continuation.resume(throwing: NSError(domain: "VideoWriterEngine", code: 4, userInfo: [NSLocalizedDescriptionKey: "No active writer"]))
+                    return
+                }
+                
+                guard self.isSessionStarted else {
+                    writer.cancelWriting()
+                    continuation.resume(throwing: NSError(
+                        domain: "VideoWriterEngine",
+                        code: 5,
+                        userInfo: [NSLocalizedDescriptionKey: "Recording was too short or no video frames were captured. Please check Screen Recording permissions in System Settings."]
+                    ))
                     return
                 }
                 

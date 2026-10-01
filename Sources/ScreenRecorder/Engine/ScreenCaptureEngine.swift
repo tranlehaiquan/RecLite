@@ -128,10 +128,14 @@ extension ScreenCaptureEngine: SCStreamOutput, SCStreamDelegate {
         
         switch type {
         case .screen:
+            if let attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+               let attachments = attachmentsArray.first,
+               let statusRawValue = attachments[SCStreamFrameInfo.status] as? Int,
+               let status = SCFrameStatus(rawValue: statusRawValue) {
+                guard status == .complete else { return }
+            }
             onVideoSampleBuffer?(sampleBuffer)
-        case .audio:
-            onSystemAudioSampleBuffer?(sampleBuffer)
-        case .microphone:
+        case .audio, .microphone:
             onSystemAudioSampleBuffer?(sampleBuffer)
         @unknown default:
             break
