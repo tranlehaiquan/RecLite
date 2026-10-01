@@ -79,7 +79,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func setupFloatingBarPanel() {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 60),
+            contentRect: NSRect(x: 0, y: 0, width: 750, height: 60),
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
             backing: .buffered,
             defer: false
@@ -100,6 +100,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     
     public func showFloatingBar() {
         guard let panel = floatingBarPanel, let screen = NSScreen.main else { return }
+        
+        panel.setContentSize(NSSize(width: 750, height: 60))
         
         // Position at bottom center, just above the Dock
         let screenRect = screen.visibleFrame
@@ -326,13 +328,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         
         if isPermissionRelated {
             alert.messageText = "Screen Recording Permission Required"
-            alert.informativeText = "ScreenRecorder needs permission to record your screen and audio.\n\nPlease enable ScreenRecorder in:\nSystem Settings > Privacy & Security > Screen & System Audio Recording."
+            alert.informativeText = "ScreenRecorder needs permission to record your screen.\n\nIf you just enabled it in System Settings, macOS requires restarting the app to take effect."
             alert.alertStyle = .warning
+            alert.addButton(withTitle: "Quit & Reopen App")
             alert.addButton(withTitle: "Open System Settings")
             alert.addButton(withTitle: "Cancel")
             
             let res = alert.runModal()
             if res == .alertFirstButtonReturn {
+                relaunchApp()
+            } else if res == .alertSecondButtonReturn {
                 PermissionsManager.shared.openScreenRecordingSystemSettings()
             }
         } else {
@@ -342,5 +347,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "OK")
             alert.runModal()
         }
+    }
+    
+    private func relaunchApp() {
+        let task = Process()
+        task.launchPath = "/usr/bin/open"
+        task.arguments = [Bundle.main.bundlePath]
+        try? task.run()
+        NSApp.terminate(nil)
     }
 }

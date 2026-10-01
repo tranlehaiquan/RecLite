@@ -58,5 +58,8 @@ cat << 'EOF' > "$CONTENTS/Info.plist"
 </plist>
 EOF
 
+echo "==> Signing App Bundle with stable Bundle ID..."
+codesign --force --deep --sign - --identifier "com.antigravity.ScreenRecorder" "$APP_DIR"
+
 echo "==> macOS App Bundle created successfully at: $APP_DIR"
 echo "You can launch it by running: open $APP_DIR"

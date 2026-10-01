@@ -89,10 +89,6 @@ public struct FloatingControlBarView: View {
                     
                     Text(settings.audioMode == .none ? "Muted" : "Audio")
                         .font(.system(size: 12, weight: .medium))
-                    
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(.secondary)
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
@@ -207,30 +203,28 @@ public struct FloatingControlBarView: View {
                     appState.isShowingSettings = true
                 }
             } label: {
-                HStack(spacing: 4) {
-                    Text("Options")
-                        .font(.system(size: 12, weight: .medium))
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(Color.white.opacity(0.08))
-                .cornerRadius(6)
+                Text("Options")
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.08))
+                    .cornerRadius(6)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
             
             // Format Badge (e.g. "MP4 • HEVC")
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text("\(settings.container.rawValue.uppercased()) • \(settings.codec.shortName)")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundColor(.cyan)
+                    .lineLimit(1)
                 Text(estimatedSizeHint)
                     .font(.system(size: 9))
                     .foregroundColor(.secondary)
+                    .lineLimit(1)
             }
+            .fixedSize()
             .padding(.horizontal, 6)
             
             // Section 4: Primary Record Button
@@ -241,25 +235,28 @@ public struct FloatingControlBarView: View {
                     Circle()
                         .fill(Color.red)
                         .frame(width: 10, height: 10)
-                        .shadow(color: .red.opacity(0.6), radius: 3)
+                        .shadow(color: .red.opacity(0.8), radius: 3)
                     
                     Text("Record")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.white)
+                        .lineLimit(1)
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 16)
                 .padding(.vertical, 7)
                 .background(
                     LinearGradient(
-                        colors: [Color.red.opacity(0.85), Color.red],
+                        colors: [Color.red.opacity(0.92), Color.red],
                         startPoint: .top,
                         endPoint: .bottom
                     )
                 )
                 .clipShape(Capsule())
-                .shadow(color: Color.red.opacity(0.35), radius: 4, x: 0, y: 2)
+                .shadow(color: Color.red.opacity(0.4), radius: 4, x: 0, y: 2)
             }
             .buttonStyle(.plain)
+            .fixedSize()
+            .layoutPriority(2)
             .help("Start Recording (Return)")
         }
         .padding(.horizontal, 16)
