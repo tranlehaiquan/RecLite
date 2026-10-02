@@ -26,7 +26,6 @@ This document tracks bugs, missing features, and planned improvements for RecLit
 ## 🟢 Polish & Nice-to-Have
 
 - [ ] **Banner image in README** — a visual preview / screenshot has been generated but not yet embedded at the top of `README.md`
-- [ ] **Fix hardcoded build path in README** — line 105 of `README.md` contains the author's personal machine path (`/Users/quantranlehai/...`) instead of a generic `cd /path/to/RecLite`
 - [ ] **Submit to `awesome-mac` list** — open a PR to [jaywcjlove/awesome-mac](https://github.com/jaywcjlove/awesome-mac) under *Screen Recording / Utilities* for passive organic discovery
 - [ ] **Submit to `AlternativeTo`** — list RecLite as a free, open-source alternative to CleanShot X, Loom, and QuickTime Player
 
@@ -35,6 +34,7 @@ This document tracks bugs, missing features, and planned improvements for RecLit
 ## ✅ Completed
 
 - [x] Native MP4 / HEVC direct capture (no re-encoding)
+- [x] README install guide (clone, build, install, permissions, troubleshooting); removed hardcoded personal build path
 - [x] Pause / Resume recording (shortcut, HUD button, and menu bar items; paused time is removed from the output)
 - [x] Show Mouse Clicks (`highlightClicks` wired to `SCStreamConfiguration.showMouseClicks`, macOS 15+)
 - [x] Microphone device picker in the Audio menu
