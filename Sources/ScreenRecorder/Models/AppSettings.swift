@@ -176,7 +176,7 @@ public final class AppSettings: ObservableObject {
             .flatMap { $0.width > 0 && $0.height > 0 ? $0 : nil }
         self.countdownSeconds = defaults.object(forKey: Keys.countdownSeconds) == nil ? 0 : defaults.integer(forKey: Keys.countdownSeconds)
         self.customSavePath = defaults.string(forKey: Keys.customSavePath)
-        self.filenamePrefix = defaults.string(forKey: Keys.filenamePrefix) ?? "Screen Recording"
+        self.filenamePrefix = defaults.string(forKey: Keys.filenamePrefix) ?? "RecLite Recording"
         self.copyToClipboardAfterRecord = defaults.bool(forKey: Keys.copyToClipboardAfterRecord)
         self.openInPlayerAfterRecord = defaults.object(forKey: Keys.openInPlayerAfterRecord) == nil ? true : defaults.bool(forKey: Keys.openInPlayerAfterRecord)
         self.autoCloseNotificationSeconds = defaults.object(forKey: Keys.autoCloseNotificationSeconds) == nil ? 5 : defaults.integer(forKey: Keys.autoCloseNotificationSeconds)
