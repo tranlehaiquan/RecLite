@@ -92,6 +92,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var recordingHUDPanel: NSPanel?
     private var areaRecordingFramePanel: NSPanel?
     private var completionPanel: NSPanel?
+    private var screenshotPanel: NSPanel?
     private var settingsWindow: NSWindow?
     private var installWindow: NSWindow?
     
@@ -112,6 +113,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         setupWindowSelectionPanel()
         setupAreaRecordingFramePanel()
         setupCompletionPanel()
+        setupScreenshotPanel()
         
         observeStateChanges()
         
@@ -186,6 +188,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             stopItem.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: nil)
             stopItem.target = self
             menu.addItem(stopItem)
+
+            let pauseShortcut = settings.shortcutPauseResume
+            let isPaused = appState.recordingState.isPaused
+            let pauseItem = NSMenuItem(title: isPaused ? "Resume Recording" : "Pause Recording", action: #selector(togglePauseAction), keyEquivalent: pauseShortcut.keyEquivalent)
+            pauseItem.keyEquivalentModifierMask = pauseShortcut.modifierFlags
+            pauseItem.image = NSImage(systemSymbolName: isPaused ? "play.circle" : "pause.circle", accessibilityDescription: nil)
+            pauseItem.target = self
+            menu.addItem(pauseItem)
             menu.addItem(NSMenuItem.separator())
         }
         
@@ -296,7 +306,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(hideHUDItem)
         
         menu.addItem(NSMenuItem.separator())
-        
+
+        let isPaused = appState.recordingState.isPaused
+        let pauseItem = NSMenuItem(title: isPaused ? "Resume Recording" : "Pause Recording", action: #selector(togglePauseAction), keyEquivalent: "")
+        pauseItem.image = NSImage(systemSymbolName: isPaused ? "play.circle" : "pause.circle", accessibilityDescription: nil)
+        pauseItem.target = self
+        menu.addItem(pauseItem)
+
         let stopItem = NSMenuItem(title: "Stop Recording", action: #selector(stopRecordingAction), keyEquivalent: "")
         stopItem.image = NSImage(systemSymbolName: "stop.circle.fill", accessibilityDescription: nil)
         stopItem.target = self
@@ -312,6 +328,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     
     @objc private func stopRecordingAction() {
         appState.stopRecording()
+    }
+
+    @objc private func togglePauseAction() {
+        appState.togglePause()
     }
     
     @objc private func toggleHUDCollapsedAction() {
@@ -390,6 +410,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             let s = total % 60
             button.title = String(format: " %02d:%02d [■]", m, s)
             button.image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Recording")
+        case .paused(let elapsed):
+            let total = Int(elapsed)
+            button.title = String(format: " %02d:%02d [❚❚]", total / 60, total % 60)
+            button.image = NSImage(systemSymbolName: "pause.circle.fill", accessibilityDescription: "Paused")
         case .finalizing:
             button.title = " Saving..."
             button.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "Saving")
@@ -426,9 +450,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.hidesOnDeactivate = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = false
+        // Native shadow follows the rounded content shape and isn't clipped by the panel bounds
+        panel.hasShadow = true
         panel.isMovableByWindowBackground = true
-        
+
         // Use FloatingBarHostingView so clicks register immediately and right-clicks pop up context menu
         let hostingView = FloatingBarHostingView(rootView: FloatingControlBarView(appState: appState))
         hostingView.appDelegate = self
@@ -778,6 +803,61 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    // MARK: - Screenshot Thumbnail Panel
+
+    private func setupScreenshotPanel() {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 220, height: 150),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .popUpMenu
+        panel.isFloatingPanel = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+
+        self.screenshotPanel = panel
+    }
+
+    private func showScreenshotThumbnail(_ result: ScreenshotResult) {
+        guard let panel = screenshotPanel, let screen = targetScreen ?? NSScreen.main else { return }
+
+        let autoCloseSeconds = Double(appState.settings.autoCloseNotificationSeconds)
+        let view = ScreenshotThumbnailView(result: result, autoCloseSeconds: autoCloseSeconds) { [weak self] in
+            self?.hideScreenshotThumbnail()
+        }
+        // FirstMouseHostingView so click/drag work without activating RecLite first
+        let hostingView = FirstMouseHostingView(rootView: view)
+        panel.contentView = hostingView
+        let size = hostingView.fittingSize
+        panel.setContentSize(size)
+
+        let screenRect = screen.visibleFrame
+        panel.setFrameOrigin(NSPoint(x: screenRect.maxX - size.width - 14, y: screenRect.minY + 14))
+
+        panel.alphaValue = 0.0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            panel.animator().alphaValue = 1.0
+        }
+    }
+
+    private func hideScreenshotThumbnail() {
+        guard let panel = screenshotPanel, panel.isVisible else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            panel.animator().alphaValue = 0.0
+        } completionHandler: {
+            panel.orderOut(nil)
+            panel.alphaValue = 1.0
+        }
+    }
+
     // MARK: - Settings Window
     
     public func openSettingsWindow() {
@@ -900,6 +980,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
         
+        appState.$lastScreenshot
+            .receive(on: RunLoop.main)
+            .sink { [weak self] screenshot in
+                guard let screenshot = screenshot else { return }
+                self?.showScreenshotThumbnail(screenshot)
+            }
+            .store(in: &cancellables)
+
         appState.$isShowingSettings
             .receive(on: RunLoop.main)
             .sink { [weak self] isShowing in

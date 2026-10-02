@@ -39,17 +39,17 @@ public final class ScreenCaptureEngine: NSObject, @unchecked Sendable {
         }
     }
     
-    // MARK: - Start Capture
-    
-    public func startCapture(
-        target: RecordingTarget,
-        fps: Int,
-        resolutionScale: ResolutionScale,
-        showCursor: Bool,
-        captureSystemAudio: Bool
-    ) async throws -> CGSize {
-        guard !isCapturing else { return .zero }
-        
+    // MARK: - Capture Source
+
+    /// Content filter, full-resolution pixel size, and optional crop for a recording target.
+    /// RecLite's own windows (control bar, overlays, HUD) are always excluded.
+    private struct CaptureSource {
+        let filter: SCContentFilter
+        let pixelSize: CGSize
+        let cropRect: CGRect?
+    }
+
+    private static func makeCaptureSource(for target: RecordingTarget) async throws -> CaptureSource {
         let shareableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         
         let filter: SCContentFilter
@@ -93,6 +93,42 @@ public final class ScreenCaptureEngine: NSObject, @unchecked Sendable {
             cropRect = rect
         }
         
+        return CaptureSource(filter: filter, pixelSize: originalSize, cropRect: cropRect)
+    }
+
+    // MARK: - Screenshot
+
+    /// Captures a single full-resolution still image of the target
+    public static func captureScreenshot(target: RecordingTarget, showCursor: Bool) async throws -> CGImage {
+        let source = try await makeCaptureSource(for: target)
+        let config = SCStreamConfiguration()
+        config.width = max(1, Int(source.pixelSize.width))
+        config.height = max(1, Int(source.pixelSize.height))
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+        config.showsCursor = showCursor
+        if let crop = source.cropRect {
+            config.sourceRect = crop
+        }
+        return try await SCScreenshotManager.captureImage(contentFilter: source.filter, configuration: config)
+    }
+
+    // MARK: - Start Capture
+    
+    public func startCapture(
+        target: RecordingTarget,
+        fps: Int,
+        resolutionScale: ResolutionScale,
+        showCursor: Bool,
+        showMouseClicks: Bool,
+        captureSystemAudio: Bool
+    ) async throws -> CGSize {
+        guard !isCapturing else { return .zero }
+        
+        let source = try await Self.makeCaptureSource(for: target)
+        let filter = source.filter
+        let originalSize = source.pixelSize
+        let cropRect = source.cropRect
+
         let targetDimensions = resolutionScale.targetDimensions(from: originalSize)
         
         // Configure stream
@@ -104,6 +140,10 @@ public final class ScreenCaptureEngine: NSObject, @unchecked Sendable {
         config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.showsCursor = showCursor
+        if #available(macOS 15.0, *) {
+            // Draws a circle around each click (requires BGRA pixel format, set above)
+            config.showMouseClicks = showMouseClicks
+        }
         config.capturesAudio = captureSystemAudio
         config.sampleRate = 48000
         config.channelCount = 2

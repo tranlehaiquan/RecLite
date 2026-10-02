@@ -16,10 +16,14 @@ public final class AppState: ObservableObject {
     @Published public var recordingState: RecordingState = .idle
     @Published public var selectedDisplayID: CGDirectDisplayID = CGMainDisplayID()
     @Published public var selectedWindow: SCWindow?
-    @Published public var selectedCropRect: CGRect?
+    @Published public var selectedCropRect: CGRect? {
+        // Persist so the area is restored on next launch (like "Remember Last Selection")
+        didSet { settings.lastCropRect = selectedCropRect }
+    }
     @Published public var isMuted: Bool = false
     @Published public var liveAudioLevel: Float = 0.0
     @Published public var lastResult: RecordingResult?
+    @Published public var lastScreenshot: ScreenshotResult?
     @Published public var isShowingResultSheet: Bool = false
     @Published public var isShowingSettings: Bool = false
     @Published public var availableDisplays: [SCDisplay] = []
@@ -43,6 +47,8 @@ public final class AppState: ObservableObject {
     private var countdownTimer: Timer?
     private var countdownRemaining: Int = 0
     private var recordingStartTime: Date?
+    private var pauseStartTime: Date?
+    private var totalPausedDuration: TimeInterval = 0
     
     public let settings = AppSettings.shared
     public let permissions = PermissionsManager.shared
@@ -50,6 +56,7 @@ public final class AppState: ObservableObject {
     // MARK: - Initializer
     
     private init() {
+        selectedCropRect = settings.lastCropRect
         setupEngineCallbacks()
         refreshAvailableSources()
     }
@@ -180,7 +187,7 @@ public final class AppState: ObservableObject {
         // Pre-warm microphone during countdown if enabled
         let captureMic = (settings.audioMode == .microphone || settings.audioMode == .both)
         if captureMic && permissions.hasMicrophonePermission {
-            try? audioEngine.start()
+            try? audioEngine.start(deviceID: settings.microphoneDeviceID)
         }
         
         countdownTimer?.invalidate()
@@ -211,22 +218,7 @@ public final class AppState: ObservableObject {
     private func startActualRecording() {
         Task {
             do {
-                let target: RecordingTarget
-                switch captureMode {
-                case .entireScreen:
-                    target = .entireScreen(displayID: selectedDisplayID)
-                case .selectedWindow:
-                    if let win = selectedWindow {
-                        target = .window(windowID: win.windowID, windowTitle: win.title ?? "")
-                    } else if let firstWin = availableWindows.first {
-                        target = .window(windowID: firstWin.windowID, windowTitle: firstWin.title ?? "")
-                    } else {
-                        target = .entireScreen(displayID: selectedDisplayID)
-                    }
-                case .selectedArea:
-                    let rect = selectedCropRect ?? CGRect(x: 100, y: 100, width: 800, height: 600)
-                    target = .area(rect: rect, displayID: selectedDisplayID)
-                }
+                let target = currentTarget()
                 
                 let captureAudio = (settings.audioMode != .none)
                 let captureSystem = (settings.audioMode == .system || settings.audioMode == .both)
@@ -234,6 +226,7 @@ public final class AppState: ObservableObject {
                 let fpsValue = settings.fps.rawValue
                 let scale = settings.resolutionScale
                 let cursor = settings.showCursor
+                let clicks = settings.highlightClicks
                 let containerVal = settings.container
                 let codecVal = settings.codec
                 let presetVal = settings.preset
@@ -248,7 +241,7 @@ public final class AppState: ObservableObject {
                     }
                     self.isMuted = false
                     self.audioEngine.isMuted = false
-                    try audioEngine.start()
+                    try audioEngine.start(deviceID: settings.microphoneDeviceID)
                 } else {
                     self.isMuted = true
                     self.audioEngine.isMuted = true
@@ -260,6 +253,7 @@ public final class AppState: ObservableObject {
                     fps: fpsValue,
                     resolutionScale: scale,
                     showCursor: cursor,
+                    showMouseClicks: clicks,
                     captureSystemAudio: captureSystem
                 )
                 
@@ -326,6 +320,8 @@ public final class AppState: ObservableObject {
                 
                 // 7. Update State & Start Timers
                 self.recordingStartTime = Date()
+                self.pauseStartTime = nil
+                self.totalPausedDuration = 0
                 self.liveElapsedTime = 0
                 self.liveBytesWritten = 0
                 self.recordingState = .recording(elapsed: 0, bytesWritten: 0)
@@ -340,13 +336,64 @@ public final class AppState: ObservableObject {
         }
     }
     
+    /// Resolves the current capture mode + selection into a concrete capture target
+    private func currentTarget() -> RecordingTarget {
+        switch captureMode {
+        case .entireScreen:
+            return .entireScreen(displayID: selectedDisplayID)
+        case .selectedWindow:
+            if let win = selectedWindow ?? availableWindows.first {
+                return .window(windowID: win.windowID, windowTitle: win.title ?? "")
+            }
+            return .entireScreen(displayID: selectedDisplayID)
+        case .selectedArea:
+            let rect = selectedCropRect ?? CGRect(x: 100, y: 100, width: 800, height: 600)
+            return .area(rect: rect, displayID: selectedDisplayID)
+        }
+    }
+
+    // MARK: - Screenshot
+
+    /// Captures a still image of the current target, saves it as PNG, and publishes the result
+    public func takeScreenshot() {
+        guard recordingState == .idle else { return }
+        guard permissions.hasScreenRecordingPermission else {
+            recordingState = .failed("Screen Recording permission is required. Please enable it in System Settings > Privacy & Security.")
+            return
+        }
+
+        let target = currentTarget()
+        let showCursor = settings.showCursor
+        let outputURL = settings.generateScreenshotFileURL()
+        isShowingAreaSelection = false
+        isShowingWindowSelection = false
+
+        Task {
+            do {
+                let image = try await ScreenCaptureEngine.captureScreenshot(target: target, showCursor: showCursor)
+                try ScreenshotWriter.writePNG(image, to: outputURL)
+                ScreenshotWriter.playShutterSound()
+
+                if settings.copyToClipboardAfterRecord {
+                    copyFileToPasteboard(outputURL)
+                }
+                lastScreenshot = ScreenshotResult(
+                    fileURL: outputURL,
+                    image: NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+                )
+            } catch {
+                handleRecordingError("Screenshot failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func startElapsedTimer() {
         timer?.invalidate()
         // Use .common mode so the timer keeps firing even while user interacts with the UI
         let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self = self, let start = self.recordingStartTime else { return }
-                let elapsed = Date().timeIntervalSince(start)
+                guard let self = self, let start = self.recordingStartTime, self.pauseStartTime == nil else { return }
+                let elapsed = Date().timeIntervalSince(start) - self.totalPausedDuration
                 let bytes = self.videoWriter?.bytesWritten ?? 0
                 self.liveElapsedTime = elapsed
                 self.liveBytesWritten = bytes
@@ -363,8 +410,34 @@ public final class AppState: ObservableObject {
         audioEngine.isMuted = isMuted
     }
     
+    // MARK: - Pause / Resume
+
+    public func pauseRecording() {
+        guard case .recording(let elapsed, _) = recordingState else { return }
+        pauseStartTime = Date()
+        videoWriter?.pause()
+        recordingState = .paused(elapsed: elapsed)
+    }
+
+    public func resumeRecording() {
+        guard case .paused(let elapsed) = recordingState, let pausedAt = pauseStartTime else { return }
+        totalPausedDuration += Date().timeIntervalSince(pausedAt)
+        pauseStartTime = nil
+        videoWriter?.resume()
+        recordingState = .recording(elapsed: elapsed, bytesWritten: liveBytesWritten)
+    }
+
+    public func togglePause() {
+        if recordingState.isPaused {
+            resumeRecording()
+        } else {
+            pauseRecording()
+        }
+    }
+
     public func stopRecording() {
         guard recordingState.isRecordingOrPaused else { return }
+        pauseStartTime = nil
         
         recordingState = .finalizing
         timer?.invalidate()

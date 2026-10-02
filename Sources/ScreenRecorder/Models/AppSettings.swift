@@ -29,6 +29,8 @@ public final class AppSettings: ObservableObject {
         static let shortcutStartStop = "app_shortcut_start_stop"
         static let shortcutPauseResume = "app_shortcut_pause_resume"
         static let shortcutToggleBar = "app_shortcut_toggle_bar"
+        static let microphoneDeviceID = "app_microphone_device_id"
+        static let lastCropRect = "app_last_crop_rect"
     }
     
     // MARK: - Published Properties
@@ -80,6 +82,22 @@ public final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(highlightClicks, forKey: Keys.highlightClicks) }
     }
     
+    /// Unique ID of the chosen microphone; nil uses the system default input
+    @Published public var microphoneDeviceID: String? {
+        didSet { UserDefaults.standard.set(microphoneDeviceID, forKey: Keys.microphoneDeviceID) }
+    }
+
+    /// Last selected crop area, restored on next launch ("Remember Last Selection")
+    @Published public var lastCropRect: CGRect? {
+        didSet {
+            if let rect = lastCropRect {
+                UserDefaults.standard.set(NSStringFromRect(rect), forKey: Keys.lastCropRect)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Keys.lastCropRect)
+            }
+        }
+    }
+
     @Published public var countdownSeconds: Int {
         didSet { UserDefaults.standard.set(countdownSeconds, forKey: Keys.countdownSeconds) }
     }
@@ -152,6 +170,10 @@ public final class AppSettings: ObservableObject {
         
         self.showCursor = defaults.object(forKey: Keys.showCursor) == nil ? true : defaults.bool(forKey: Keys.showCursor)
         self.highlightClicks = defaults.bool(forKey: Keys.highlightClicks)
+        self.microphoneDeviceID = defaults.string(forKey: Keys.microphoneDeviceID)
+        self.lastCropRect = defaults.string(forKey: Keys.lastCropRect)
+            .map { NSRectFromString($0) }
+            .flatMap { $0.width > 0 && $0.height > 0 ? $0 : nil }
         self.countdownSeconds = defaults.object(forKey: Keys.countdownSeconds) == nil ? 0 : defaults.integer(forKey: Keys.countdownSeconds)
         self.customSavePath = defaults.string(forKey: Keys.customSavePath)
         self.filenamePrefix = defaults.string(forKey: Keys.filenamePrefix) ?? "Screen Recording"
@@ -201,6 +223,14 @@ public final class AppSettings: ObservableObject {
         return moviesDir ?? desktopDir ?? FileManager.default.temporaryDirectory
     }
     
+    /// Generate a new screenshot destination file URL, named like macOS ("Screenshot <date>.png")
+    public func generateScreenshotFileURL() -> URL {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+        let filename = "Screenshot \(formatter.string(from: Date())).png"
+        return saveDirectoryURL.appendingPathComponent(filename)
+    }
+
     /// Generate a new recording destination file URL with timestamp and proper extension
     public func generateOutputFileURL() -> URL {
         let formatter = DateFormatter()
