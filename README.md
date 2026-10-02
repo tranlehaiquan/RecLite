@@ -1,5 +1,12 @@
 # RecLite (for macOS)
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/control-bar-dark.png">
+    <img src="docs/images/control-bar-light.png" alt="RecLite floating control bar" width="860">
+  </picture>
+</p>
+
 A native, ultra-high-performance macOS screen recording application built with **Swift**, **ScreenCaptureKit**, and **AVFoundation**.
 
 Designed to replicate the seamless user experience of macOS's built-in screen recording (`Command + Shift + 5`) while solving its biggest limitation: **giant, heavyweight uncompressed `.mov` files**.
@@ -65,6 +72,20 @@ Designed to replicate the seamless user experience of macOS's built-in screen re
 
 ---
 
+## 📸 Screenshots
+
+| Recording HUD | Recording Saved |
+| :---: | :---: |
+| <img src="docs/images/recording-hud.png" alt="Recording HUD with timer, mute, pause and stop" width="360"> | <img src="docs/images/completion-card.png" alt="Completion card with thumbnail, file size and quick actions" width="400"> |
+
+<p align="center">
+  <img src="docs/images/settings.png" alt="RecLite Preferences window" width="620">
+</p>
+
+> Images are rendered from the real SwiftUI views — regenerate them with `./scripts/generate_readme_images.sh` (see below).
+
+---
+
 ## 🛠 Project Structure
 
 ```
@@ -123,7 +144,13 @@ open ScreenRecorder.app
 open RecLite-Installer.dmg
 ```
 
-### 3. Run Unit Tests
+### 3. Regenerate README Images
+```bash
+./scripts/generate_readme_images.sh
+```
+Renders the control bar (light & dark), recording HUD, completion card, and Preferences window offscreen into `docs/images/`. No screen capture or permissions needed — rerun after any UI change.
+
+### 4. Run Unit Tests
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```

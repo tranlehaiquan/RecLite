@@ -498,12 +498,28 @@ struct CaptureModeButton: View {
 
 // MARK: - VisualEffectBlur Helper
 
+private struct SnapshotRenderingKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// True when views are rendered offscreen for README images (scripts/generate_readme_images.sh).
+    /// Live blur can't be captured offscreen, so VisualEffectBlur draws a translucent fill instead.
+    var isSnapshotRendering: Bool {
+        get { self[SnapshotRenderingKey.self] }
+        set { self[SnapshotRenderingKey.self] = newValue }
+    }
+}
+
 struct VisualEffectBlur: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .hudWindow
     var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
     var cornerRadius: CGFloat = 0
 
-    func makeNSView(context: Context) -> NSVisualEffectView {
+    func makeNSView(context: Context) -> NSView {
+        if context.environment.isSnapshotRendering {
+            return SnapshotMaterialView(cornerRadius: cornerRadius, isDark: context.environment.colorScheme == .dark)
+        }
         let view = NSVisualEffectView()
         view.material = material
         view.blendingMode = blendingMode
@@ -515,10 +531,30 @@ struct VisualEffectBlur: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = material
-        nsView.blendingMode = blendingMode
-        nsView.layer?.cornerRadius = cornerRadius
-        nsView.layer?.masksToBounds = cornerRadius > 0
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let effectView = nsView as? NSVisualEffectView else { return }
+        effectView.material = material
+        effectView.blendingMode = blendingMode
+        effectView.layer?.cornerRadius = cornerRadius
+        effectView.layer?.masksToBounds = cornerRadius > 0
+    }
+}
+
+/// Static stand-in for the HUD blur material, drawn via draw(_:) so offscreen caching captures it
+private final class SnapshotMaterialView: NSView {
+    private let cornerRadius: CGFloat
+    private let isDark: Bool
+
+    init(cornerRadius: CGFloat, isDark: Bool) {
+        self.cornerRadius = cornerRadius
+        self.isDark = isDark
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(white: isDark ? 0.16 : 0.95, alpha: isDark ? 0.88 : 0.86).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius).fill()
     }
 }
