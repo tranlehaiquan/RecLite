@@ -186,7 +186,7 @@ public struct SettingsView: View {
                 )
                 
                 comparisonRow(
-                    title: "ScreenRecorder • H.264 MP4",
+                    title: "RecLite • H.264 MP4",
                     subtitle: "Universal Compatibility MP4",
                     size: "~45 MB",
                     savings: "87% Smaller",
@@ -194,7 +194,7 @@ public struct SettingsView: View {
                 )
                 
                 comparisonRow(
-                    title: "ScreenRecorder • HEVC MP4 (Recommended)",
+                    title: "RecLite • HEVC MP4 (Recommended)",
                     subtitle: "Hardware HEVC with Optimized Bitrate",
                     size: "~18 MB",
                     savings: "95% Smaller!",
@@ -203,7 +203,7 @@ public struct SettingsView: View {
                 )
                 
                 comparisonRow(
-                    title: "ScreenRecorder • Ultra Compact",
+                    title: "RecLite • Ultra Compact",
                     subtitle: "Tuned for Slack, Discord & Web Uploads",
                     size: "~8 MB",
                     savings: "98% Smaller!",

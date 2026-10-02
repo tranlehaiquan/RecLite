@@ -419,7 +419,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             button.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "Saving")
         default:
             button.title = ""
-            button.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "ScreenRecorder")
+            button.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "RecLite")
         }
     }
     
@@ -1019,7 +1019,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         
         if isPermissionRelated {
             alert.messageText = "Screen Recording Permission Required"
-            alert.informativeText = "ScreenRecorder needs permission to record your screen.\n\nIf you just enabled it in System Settings, macOS requires restarting the app to take effect."
+            alert.informativeText = "RecLite needs permission to record your screen.\n\nIf you just enabled it in System Settings, macOS requires restarting the app to take effect."
             alert.alertStyle = .warning
             alert.addButton(withTitle: "Quit & Reopen App")
             alert.addButton(withTitle: "Open System Settings")

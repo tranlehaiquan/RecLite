@@ -6,8 +6,8 @@ This document tracks bugs, missing features, and planned improvements for RecLit
 
 ## 🔴 Bugs / Critical Fixes
 
-- [ ] **`filenamePrefix` defaults to `"Screen Recording"`** — should default to `"RecLite Recording"` so saved files are branded correctly (`AppSettings.swift` L157)
-- [ ] **Size Comparison tab still references `"ScreenRecorder"`** — comparison row titles say `"ScreenRecorder • H.264 MP4"` etc. (`SettingsView.swift` L189–210)
+_No known open bugs._
+
 
 ---
 
@@ -34,6 +34,7 @@ This document tracks bugs, missing features, and planned improvements for RecLit
 ## ✅ Completed
 
 - [x] Native MP4 / HEVC direct capture (no re-encoding)
+- [x] Rebranding leftovers fixed: default filename prefix is now `RecLite Recording`; Size Comparison rows, menu bar accessibility label, and permission alert say RecLite
 - [x] README install guide (clone, build, install, permissions, troubleshooting); removed hardcoded personal build path
 - [x] Pause / Resume recording (shortcut, HUD button, and menu bar items; paused time is removed from the output)
 - [x] Show Mouse Clicks (`highlightClicks` wired to `SCStreamConfiguration.showMouseClicks`, macOS 15+)
