@@ -30,7 +30,14 @@ public final class VideoWriterEngine: @unchecked Sendable {
     private var sessionStartTime: CMTime = .invalid
     private var lastVideoTime: CMTime = .invalid
     private var lastAudioTime: CMTime = .invalid
-    
+
+    // Pause handling: samples are dropped while paused, and the paused gap is
+    // subtracted from all later timestamps so the output has no dead time.
+    private var isPaused: Bool = false
+    private var needsOffsetUpdate: Bool = false
+    private var timeOffset: CMTime = .zero
+    private var lastSourceTime: CMTime = .invalid
+
     public private(set) var bytesWritten: Int64 = 0
     
     // MARK: - Initializer
@@ -142,8 +149,45 @@ public final class VideoWriterEngine: @unchecked Sendable {
         self.sessionStartTime = .invalid
         self.lastVideoTime = .invalid
         self.lastAudioTime = .invalid
+        self.isPaused = false
+        self.needsOffsetUpdate = false
+        self.timeOffset = .zero
+        self.lastSourceTime = .invalid
     }
-    
+
+    // MARK: - Pause / Resume
+
+    public func pause() {
+        writerQueue.async { [weak self] in
+            self?.isPaused = true
+        }
+    }
+
+    public func resume() {
+        writerQueue.async { [weak self] in
+            guard let self = self, self.isPaused else { return }
+            self.isPaused = false
+            self.needsOffsetUpdate = true
+        }
+    }
+
+    /// Converts a source timestamp into output time, folding any paused gap into the offset.
+    /// Must be called on `writerQueue`. Returns nil while paused (sample should be dropped).
+    private func adjustedTime(for sourceTime: CMTime, duration: CMTime = .zero) -> CMTime? {
+        guard !isPaused else { return nil }
+        if needsOffsetUpdate {
+            if lastSourceTime.isValid && sourceTime > lastSourceTime {
+                timeOffset = CMTimeAdd(timeOffset, CMTimeSubtract(sourceTime, lastSourceTime))
+            }
+            needsOffsetUpdate = false
+        }
+        let end = duration.isValid ? CMTimeAdd(sourceTime, duration) : sourceTime
+        if !lastSourceTime.isValid || end > lastSourceTime {
+            lastSourceTime = end
+        }
+        return CMTimeSubtract(sourceTime, timeOffset)
+    }
+
     // MARK: - Frame Append
     
     public func appendVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
@@ -154,11 +198,11 @@ public final class VideoWriterEngine: @unchecked Sendable {
         appendVideoPixelBuffer(pixelBuffer, presentationTime: pts)
     }
     
-    public func appendVideoPixelBuffer(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+    public func appendVideoPixelBuffer(_ pixelBuffer: CVPixelBuffer, presentationTime sourceTime: CMTime) {
         writerQueue.async { [weak self] in
             guard let self = self, self.isWriting, let writer = self.assetWriter, let adaptor = self.pixelBufferAdaptor else { return }
-            
-            guard presentationTime.isValid else { return }
+
+            guard sourceTime.isValid, let presentationTime = self.adjustedTime(for: sourceTime) else { return }
             
             if !self.isSessionStarted {
                 writer.startSession(atSourceTime: presentationTime)
@@ -186,9 +230,10 @@ public final class VideoWriterEngine: @unchecked Sendable {
         writerQueue.async { [weak self] in
             guard let self = self, self.isWriting, let aInput = self.audioInput, let writer = self.assetWriter else { return }
             
-            let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-            guard pts.isValid else { return }
-            
+            let sourcePTS = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            guard sourcePTS.isValid,
+                  let pts = self.adjustedTime(for: sourcePTS, duration: CMSampleBufferGetDuration(sampleBuffer)) else { return }
+
             // If session hasn't started yet, audio can start the session
             if !self.isSessionStarted {
                 writer.startSession(atSourceTime: pts)
@@ -225,9 +270,9 @@ public final class VideoWriterEngine: @unchecked Sendable {
                 finalPTS = CMTimeAdd(self.lastAudioTime, CMTime(value: 1, timescale: 48000))
             }
             
-            // If timestamp had to be adjusted, recreate with new timing
+            // If timestamp had to be adjusted (monotonic fix or pause offset), recreate with new timing
             let bufferToAppend: CMSampleBuffer
-            if CMTimeCompare(finalPTS, pts) != 0 {
+            if CMTimeCompare(finalPTS, sourcePTS) != 0 {
                 bufferToAppend = self.retimedSampleBuffer(stereoBuffer, newPTS: finalPTS, duration: bufferDuration) ?? stereoBuffer
             } else {
                 bufferToAppend = stereoBuffer

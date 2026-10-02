@@ -19,12 +19,12 @@ public struct FloatingControlBarView: View {
             HStack(spacing: 2) {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(.white.opacity(0.65))
+                    .foregroundColor(.secondary)
             }
             .frame(width: 22, height: 26)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.white.opacity(0.12))
+                    .fill(Color.primary.opacity(0.12))
             )
             .overlay(
                 WindowDragHandle()
@@ -39,7 +39,7 @@ public struct FloatingControlBarView: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(.secondary)
                     .frame(width: 22, height: 22)
-                    .background(Color.white.opacity(0.1))
+                    .background(Color.primary.opacity(0.1))
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
@@ -135,6 +135,24 @@ public struct FloatingControlBarView: View {
                         }
                     }
                 }
+
+                // Microphone device selection (devices are re-queried each time the menu opens)
+                Section("Microphone") {
+                    Button(action: { settings.microphoneDeviceID = nil }) {
+                        HStack {
+                            Text("System Default")
+                            if settings.microphoneDeviceID == nil { Image(systemName: "checkmark") }
+                        }
+                    }
+                    ForEach(AudioCaptureEngine.availableMicrophones(), id: \.uniqueID) { device in
+                        Button(action: { settings.microphoneDeviceID = device.uniqueID }) {
+                            HStack {
+                                Text(device.localizedName)
+                                if settings.microphoneDeviceID == device.uniqueID { Image(systemName: "checkmark") }
+                            }
+                        }
+                    }
+                }
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: audioIconName)
@@ -146,7 +164,7 @@ public struct FloatingControlBarView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-                .background(Color.white.opacity(0.08))
+                .background(Color.primary.opacity(0.08))
                 .cornerRadius(6)
             }
             .menuStyle(.borderlessButton)
@@ -238,6 +256,12 @@ public struct FloatingControlBarView: View {
                             if settings.countdownSeconds == 5 { Image(systemName: "checkmark") }
                         }
                     }
+                    Button(action: { settings.countdownSeconds = 10 }) {
+                        HStack {
+                            Text("10 Seconds")
+                            if settings.countdownSeconds == 10 { Image(systemName: "checkmark") }
+                        }
+                    }
                 }
                 
                 Divider()
@@ -248,6 +272,17 @@ public struct FloatingControlBarView: View {
                     HStack {
                         Text("Show Mouse Pointer")
                         if settings.showCursor { Image(systemName: "checkmark") }
+                    }
+                }
+
+                if #available(macOS 15.0, *) {
+                    Button(action: {
+                        settings.highlightClicks.toggle()
+                    }) {
+                        HStack {
+                            Text("Show Mouse Clicks")
+                            if settings.highlightClicks { Image(systemName: "checkmark") }
+                        }
                     }
                 }
                 
@@ -261,7 +296,7 @@ public struct FloatingControlBarView: View {
                     .font(.system(size: 12, weight: .medium))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.08))
+                    .background(Color.primary.opacity(0.08))
                     .cornerRadius(6)
             }
             .menuStyle(.borderlessButton)
@@ -278,7 +313,7 @@ public struct FloatingControlBarView: View {
                 } else {
                     Text("\(settings.container.rawValue.uppercased()) • \(settings.codec.shortName)")
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(.cyan)
+                        .foregroundColor(.blue)
                         .lineLimit(1)
                 }
                 Text(estimatedSizeHint)
@@ -289,7 +324,12 @@ public struct FloatingControlBarView: View {
             .fixedSize()
             .padding(.horizontal, 6)
             
-            // Section 4: Primary Record Button
+            // Section 4: Screenshot of the current target (screen / window / area)
+            ScreenshotButton {
+                appState.takeScreenshot()
+            }
+
+            // Section 5: Primary Record Button
             PrimaryRecordButton {
                 appState.toggleRecording()
             }
@@ -300,14 +340,17 @@ public struct FloatingControlBarView: View {
         .padding(.vertical, 10)
         .background(
             ZStack {
-                VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
+                // Behind-window blur ignores SwiftUI clipping, so round it at the layer level
+                VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow, cornerRadius: 14)
                 WindowDragHandle()
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
             }
         )
         .clipShape(RoundedRectangle(cornerRadius: 14))
-        .shadow(color: Color.black.opacity(0.4), radius: 16, x: 0, y: 6)
+        // Drawn after clipping so the full border width stays visible
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
+        )
         .contextMenu {
             Button("Hide Control Bar") {
                 (NSApp.delegate as? AppDelegate)?.hideFloatingBar()
@@ -385,6 +428,32 @@ struct PrimaryRecordButton: View {
     }
 }
 
+// MARK: - ScreenshotButton
+
+struct ScreenshotButton: View {
+    let action: () -> Void
+    @State private var isHovering: Bool = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "camera")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(isHovering ? .primary : .secondary)
+                .frame(width: 32, height: 30)
+                .background(
+                    Capsule()
+                        .fill(Color.primary.opacity(isHovering ? 0.14 : 0.08))
+                )
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovering = hovering
+        }
+        .help("Take Screenshot of Selected Target")
+    }
+}
+
 // MARK: - CaptureModeButton
 
 struct CaptureModeButton: View {
@@ -402,22 +471,22 @@ struct CaptureModeButton: View {
             VStack(spacing: 3) {
                 Image(systemName: iconName)
                     .font(.system(size: 15, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? .white : (isHovering ? .primary : .secondary))
+                    .foregroundColor(isSelected ? .primary : (isHovering ? .primary : .secondary))
                 
                 Text(title)
                     .font(.system(size: 10, weight: isSelected ? .medium : .regular))
-                    .foregroundColor(isSelected ? .white : (isHovering ? .primary : .secondary))
+                    .foregroundColor(isSelected ? .primary : (isHovering ? .primary : .secondary))
                     .lineLimit(1)
             }
             .frame(width: 84, height: 42)
             .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? Color.white.opacity(0.18) : (isHovering ? Color.white.opacity(0.08) : Color.clear))
+                    .fill(isSelected ? Color.primary.opacity(0.18) : (isHovering ? Color.primary.opacity(0.08) : Color.clear))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.white.opacity(0.28) : Color.clear, lineWidth: 1)
+                    .strokeBorder(isSelected ? Color.primary.opacity(0.15) : Color.clear, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -432,17 +501,24 @@ struct CaptureModeButton: View {
 struct VisualEffectBlur: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .hudWindow
     var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
-    
+    var cornerRadius: CGFloat = 0
+
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = material
         view.blendingMode = blendingMode
         view.state = .active
+        view.wantsLayer = true
+        view.layer?.cornerCurve = .continuous
+        view.layer?.cornerRadius = cornerRadius
+        view.layer?.masksToBounds = cornerRadius > 0
         return view
     }
-    
+
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
         nsView.material = material
         nsView.blendingMode = blendingMode
+        nsView.layer?.cornerRadius = cornerRadius
+        nsView.layer?.masksToBounds = cornerRadius > 0
     }
 }

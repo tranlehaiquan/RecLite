@@ -451,8 +451,8 @@ public struct SettingsView: View {
                 Divider()
                 
                 shortcutRow(
-                    title: "Pause / Stop Recording",
-                    description: "Pause active recording or stop if currently running",
+                    title: "Pause / Resume Recording",
+                    description: "Pause the active recording, or resume it if paused",
                     shortcut: $settings.shortcutPauseResume,
                     presets: [
                         KeyShortcut.defaultPauseResume,

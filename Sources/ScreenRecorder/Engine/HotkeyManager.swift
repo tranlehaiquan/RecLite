@@ -94,12 +94,9 @@ public final class HotkeyManager: ObservableObject {
     }
     
     private func triggerPauseResumeAction(appState: AppState) {
-        // Toggle recording/paused if currently recording or paused
-        if case .recording = appState.recordingState {
-            // Note: Pause action if available in future, or stop
-            appState.stopRecording()
-        } else if appState.recordingState == .idle {
-            appState.startRecordingFlow()
+        // Toggle between recording and paused; no-op when not recording
+        if appState.recordingState.isRecordingOrPaused {
+            appState.togglePause()
         }
     }
     

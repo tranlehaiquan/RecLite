@@ -17,14 +17,27 @@ public final class AudioCaptureEngine: NSObject, @unchecked Sendable {
     public var isMuted: Bool = false
     public private(set) var isRunning: Bool = false
     
+    // MARK: - Device Discovery
+
+    /// All connected audio input devices (built-in, USB, Bluetooth, Continuity, etc.)
+    public static func availableMicrophones() -> [AVCaptureDevice] {
+        AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.microphone, .external],
+            mediaType: .audio,
+            position: .unspecified
+        ).devices
+    }
+
     // MARK: - Lifecycle
-    
-    public func start() throws {
+
+    /// Starts microphone capture. Uses the device with `deviceID` if connected, otherwise the system default.
+    public func start(deviceID: String? = nil) throws {
         guard !isRunning else { return }
-        
+
         let session = AVCaptureSession()
-        
-        guard let micDevice = AVCaptureDevice.default(for: .audio) else {
+
+        let preferredDevice = deviceID.flatMap { AVCaptureDevice(uniqueID: $0) }
+        guard let micDevice = preferredDevice ?? AVCaptureDevice.default(for: .audio) else {
             throw NSError(domain: "AudioCaptureEngine", code: 1, userInfo: [NSLocalizedDescriptionKey: "No microphone device found"])
         }
         

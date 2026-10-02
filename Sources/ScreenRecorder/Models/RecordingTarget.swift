@@ -60,4 +60,9 @@ public enum RecordingState: Equatable, Sendable {
         default: return false
         }
     }
+
+    public var isPaused: Bool {
+        if case .paused = self { return true }
+        return false
+    }
 }

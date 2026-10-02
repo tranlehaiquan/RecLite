@@ -8,13 +8,15 @@ This document tracks bugs, missing features, and planned improvements for RecLit
 
 - [ ] **`filenamePrefix` defaults to `"Screen Recording"`** — should default to `"RecLite Recording"` so saved files are branded correctly (`AppSettings.swift` L157)
 - [ ] **Size Comparison tab still references `"ScreenRecorder"`** — comparison row titles say `"ScreenRecorder • H.264 MP4"` etc. (`SettingsView.swift` L189–210)
-- [ ] **`highlightClicks` setting is saved but never used** — the option exists in `AppSettings` and presumably shown in UI, but is never passed to `ScreenCaptureEngine` during recording
 
 ---
 
 ## 🟡 Missing Features
 
-- [ ] **Pause / Resume recording** — `shortcutPauseResume` is defined in settings and the keyboard shortcut is configurable, but `AppState` has no `pauseRecording()` / `resumeRecording()` implementation — the shortcut currently does nothing
+- [ ] **Screenshot keyboard shortcut** — screenshots are available from the control bar camera button, but there is no configurable global hotkey yet
+- [ ] **"Save to" destinations in Options menu** — native offers Desktop, Documents, Clipboard, Mail, Messages, QuickTime Player, and Other Location directly from the bar; RecLite only has a save folder in Preferences
+- [ ] **Drag-out from video completion card** — native's floating thumbnail can be dragged straight into Mail, Slack, Finder, etc. (done for screenshots, not yet for videos)
+- [ ] **Quick trim** — native lets you trim the clip from the floating thumbnail before saving
 - [ ] **Launch at Login** — a "Start RecLite at Login" toggle in General settings. Native macOS screen recorders are expected to offer this via `SMAppService`
 - [ ] **Recording history / Recent files** — a list of past recordings accessible from the menu bar icon, allowing users to re-open, reveal in Finder, or delete previous recordings without digging through the Movies folder
 - [ ] **GitHub Release with downloadable DMG** — no tagged `v1.0.0` release with a `RecLite-Installer.dmg` asset has been published yet; required for Homebrew cask submission and broad user adoption
@@ -33,6 +35,12 @@ This document tracks bugs, missing features, and planned improvements for RecLit
 ## ✅ Completed
 
 - [x] Native MP4 / HEVC direct capture (no re-encoding)
+- [x] Pause / Resume recording (shortcut, HUD button, and menu bar items; paused time is removed from the output)
+- [x] Show Mouse Clicks (`highlightClicks` wired to `SCStreamConfiguration.showMouseClicks`, macOS 15+)
+- [x] Microphone device picker in the Audio menu
+- [x] 10-second countdown timer option
+- [x] Screenshots (entire screen / window / area) via `SCScreenshotManager`, saved as PNG with a native-style floating thumbnail (click to open, drag to share, right-click to copy / reveal / delete)
+- [x] Remember last selected area across launches
 - [x] Floating glassmorphic control bar (Cmd+Shift+5 style)
 - [x] Interactive draggable crop area selection
 - [x] Window picker with live thumbnail previews

@@ -16,11 +16,9 @@ public struct RecordingHUDView: View {
         Group {
             switch appState.recordingState {
             case .recording(let elapsed, _):
-                if appState.isHUDCollapsed {
-                    collapsedBarView(elapsed: elapsed)
-                } else {
-                    fullBarView(elapsed: elapsed)
-                }
+                hudBar(elapsed: elapsed, isPaused: false)
+            case .paused(let elapsed):
+                hudBar(elapsed: elapsed, isPaused: true)
             case .finalizing:
                 finalizingView
             default:
@@ -29,14 +27,23 @@ public struct RecordingHUDView: View {
         }
     }
     
+    @ViewBuilder
+    private func hudBar(elapsed: TimeInterval, isPaused: Bool) -> some View {
+        if appState.isHUDCollapsed {
+            collapsedBarView(elapsed: elapsed, isPaused: isPaused)
+        } else {
+            fullBarView(elapsed: elapsed, isPaused: isPaused)
+        }
+    }
+
     // MARK: - Collapsed Mini-Pill (Ultra-compact, frees screen space)
     
-    private func collapsedBarView(elapsed: TimeInterval) -> some View {
+    private func collapsedBarView(elapsed: TimeInterval, isPaused: Bool) -> some View {
         HStack(spacing: 6) {
             // Generous drag zone (entire left area)
             HStack(spacing: 6) {
                 dragGrip
-                blinkingDot
+                statusDot(isPaused: isPaused)
                 Text(formattedTime(elapsed))
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundColor(.white)
@@ -93,12 +100,12 @@ public struct RecordingHUDView: View {
     
     // MARK: - Full Recording Bar View
     
-    private func fullBarView(elapsed: TimeInterval) -> some View {
+    private func fullBarView(elapsed: TimeInterval, isPaused: Bool) -> some View {
         HStack(spacing: 10) {
             // Generous Drag Zone: Grip + Blinking Dot + Elapsed Time (~110px wide drag area)
             HStack(spacing: 8) {
                 dragGrip
-                blinkingDot
+                statusDot(isPaused: isPaused)
                 Text(formattedTime(elapsed))
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
                     .foregroundColor(.white)
@@ -136,7 +143,24 @@ public struct RecordingHUDView: View {
             }
             .buttonStyle(.plain)
             .help(appState.isMuted ? "Unmute microphone" : "Mute microphone")
-            
+
+            // Pause / Resume toggle
+            Button(action: {
+                appState.togglePause()
+            }) {
+                Image(systemName: isPaused ? "play.fill" : "pause.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(isPaused ? .orange : .white.opacity(0.85))
+                    .frame(width: 26, height: 26)
+                    .background(
+                        Circle()
+                            .fill(isPaused ? Color.orange.opacity(0.2) : Color.white.opacity(0.08))
+                    )
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(isPaused ? "Resume recording" : "Pause recording")
+
             // Stop Button
             Button(action: {
                 appState.stopRecording()
@@ -223,6 +247,18 @@ public struct RecordingHUDView: View {
         )
     }
     
+    @ViewBuilder
+    private func statusDot(isPaused: Bool) -> some View {
+        if isPaused {
+            Image(systemName: "pause.fill")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(.orange)
+                .frame(width: 9, height: 9)
+        } else {
+            blinkingDot
+        }
+    }
+
     private var blinkingDot: some View {
         Circle()
             .fill(Color.red)
@@ -243,6 +279,9 @@ public struct RecordingHUDView: View {
             (NSApp.delegate as? AppDelegate)?.hideRecordingHUD()
         }
         Divider()
+        Button(appState.recordingState.isPaused ?"Resume Recording" : "Pause Recording") {
+            appState.togglePause()
+        }
         Button("Stop Recording", role: .destructive) {
             appState.stopRecording()
         }
